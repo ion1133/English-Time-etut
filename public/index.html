@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>English Time Etüt System</title>
+<meta name="theme-color" content="#111114">
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <img src="/logo.png" alt="English Time">
+    <div>
+      <div class="brand">English Time <span>Etüt System</span></div>
+      <div class="sub" data-i18n="tag">Language Schools &amp; Overseas Education</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="lang" role="group" aria-label="Language">
+      <button type="button" data-lang="tr" class="on">TR</button>
+      <button type="button" data-lang="en">EN</button>
+    </div>
+  </div>
+</header>
+
+<main class="page">
+  <div class="steps">
+    <div class="step on" id="st1"><i>1</i><b data-i18n="s1">Bilgileriniz</b></div>
+    <div class="step" id="st2"><i>2</i><b data-i18n="s2">Etüt seçimi</b></div>
+    <div class="step" id="st3"><i>3</i><b data-i18n="s3">Onay</b></div>
+  </div>
+
+  <!-- STEP 1 -->
+  <section id="p1">
+    <div class="hero">
+      <div class="eyebrow" data-i18n="e1">Etüt kaydı</div>
+      <h1 data-i18n="h1">Kaçırdığın ya da anlamadığın konuyu etütte telafi et.</h1>
+      <p data-i18n="p1">Bilgilerini gir, sana uygun etüt saatlerini seç. Kaydın hem sana SMS ile hem de öğretmenine iletilir.</p>
+    </div>
+    <form class="card" id="form" novalidate>
+      <div class="grid">
+        <label class="f"><span data-i18n="fn">Ad</span>
+          <input class="input" id="first" autocomplete="given-name" maxlength="40" required>
+          <span class="err" id="e_first"></span></label>
+        <label class="f"><span data-i18n="ln">Soyad</span>
+          <input class="input" id="last" autocomplete="family-name" maxlength="40" required>
+          <span class="err" id="e_last"></span></label>
+        <label class="f"><span data-i18n="ph">Telefon</span> <small data-i18n="phs">05XX XXX XX XX — SMS bu numaraya gidecek</small>
+          <input class="input" id="phone" inputmode="numeric" autocomplete="tel" placeholder="05__ ___ __ __" maxlength="14" required>
+          <span class="err" id="e_phone"></span></label>
+        <label class="f"><span data-i18n="lv">Şu an okuduğun seviye</span>
+          <select class="input" id="level" required>
+            <option value="" data-i18n="lvp">Seviye seç</option>
+            <option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option>
+          </select>
+          <span class="err" id="e_level"></span></label>
+        <label class="f full"><span data-i18n="tp">Sormak istediğin konu</span> <small data-i18n="tps">İsteğe bağlı</small>
+          <textarea class="input" id="topic" maxlength="200" data-i18n-ph="tpph" placeholder="Örn: Present perfect, relative clauses…"></textarea></label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit" id="toStep2"><span data-i18n="next">Etüt saatlerine geç</span> →</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- STEP 2 -->
+  <section id="p2" class="hidden">
+    <div class="hero">
+      <div class="eyebrow" data-i18n="e2">Haftalık etüt programı</div>
+      <h1 data-i18n="h2">Katılmak istediğin etütleri seç.</h1>
+      <p id="p2desc"></p>
+    </div>
+    <div class="card">
+      <div class="sched-head">
+        <div class="legend">
+          <span><i></i><em data-i18n="lg1">Seçilebilir</em></span>
+          <span><i class="sel"></i><em data-i18n="lg2">Seçildi</em></span>
+          <span><i class="lock"></i><em data-i18n="lg3">Seviyene uygun değil / dolu</em></span>
+          <span><i class="can"></i><em data-i18n="lg4">İptal edildi</em></span>
+        </div>
+        <div class="tag y" id="selCount"></div>
+      </div>
+      <div class="daytabs" id="daytabs"></div>
+      <div class="sched" id="sched"></div>
+      <div class="classroom" id="classroom"></div>
+      <div class="actions">
+        <button class="btn ghost" type="button" id="back1">← <span data-i18n="back">Geri</span></button>
+        <button class="btn primary" type="button" id="submit" disabled><span data-i18n="submit">Kaydı tamamla</span> ✓</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section id="p3" class="hidden">
+    <div class="card done-wrap">
+      <div class="done-ico">✓</div>
+      <h1 data-i18n="h3">Kaydın alındı!</h1>
+      <p class="note" id="doneNote"></p>
+      <div class="summary" id="summary"></div>
+      <p class="note" data-i18n="remind">Lütfen etüt saatinden 5 dakika önce sınıfta ol. İyi dersler dileriz.</p>
+      <button class="btn yellow" type="button" id="again" data-i18n="again">Yeni kayıt</button>
+    </div>
+  </section>
+</main>
+
+<div class="modal-bg" id="modalBg" role="dialog" aria-modal="true">
+  <div class="modal">
+    <h3 id="mTitle"></h3>
+    <p id="mBody" class="note" style="font-size:.95rem"></p>
+    <div class="actions"><button class="btn primary" type="button" id="mClose" data-i18n="ok">Tamam</button></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

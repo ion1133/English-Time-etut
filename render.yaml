@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: english-time-etut
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_PASSWORD
+        value: EnglishTime2026!
+      - key: SESSION_SECRET
+        generateValue: true

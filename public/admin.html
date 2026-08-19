@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yönetim · English Time Etüt System</title>
+<link rel="icon" href="/logo.png">
+<link rel="stylesheet" href="/styles.css">
+<meta name="robots" content="noindex">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <img src="/logo.png" alt="English Time">
+    <div>
+      <div class="brand">English Time <span>Etüt System</span></div>
+      <div class="sub">Yönetim Paneli · Eğitim Koordinatörü</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn ghost sm hidden" id="logout" style="color:#fff;border-color:#444">Çıkış</button>
+  </div>
+</header>
+
+<main class="page">
+  <!-- LOGIN -->
+  <section id="login" class="card login hidden">
+    <div class="eyebrow">Giriş</div>
+    <h2 style="margin:6px 0 14px">Yönetim paneli</h2>
+    <label class="f">Şifre<input class="input" type="password" id="pw" autocomplete="current-password"></label>
+    <span class="err" id="pwErr"></span>
+    <div class="actions"><button class="btn primary" id="loginBtn">Giriş yap</button></div>
+  </section>
+
+  <!-- PANEL -->
+  <section id="panel" class="hidden">
+    <div class="tabs" id="tabs">
+      <button data-tab="overview" class="on">Genel bakış</button>
+      <button data-tab="schedule">Program</button>
+      <button data-tab="teachers">Öğretmenler</button>
+      <button data-tab="bookings">Kayıtlar</button>
+      <button data-tab="messages">Mesajlar</button>
+      <button data-tab="settings">Ayarlar</button>
+    </div>
+
+    <div class="tab" id="tab-overview">
+      <div class="stats" id="stats"></div>
+      <div class="grid" style="align-items:start">
+        <div class="card qr-box">
+          <div class="eyebrow">Panoya asılacak QR kod</div>
+          <img id="qrImg" alt="QR">
+          <div class="note" id="siteUrl"></div>
+          <div class="inline"><a class="btn yellow sm" id="qrDl" download="english-time-etut-qr.png">QR'ı indir (PNG)</a>
+            <a class="btn ghost sm" id="openSite" target="_blank">Öğrenci sayfasını aç</a></div>
+        </div>
+        <div class="card">
+          <div class="eyebrow">Excel</div>
+          <h3 style="margin:6px 0 8px">Tüm kayıtları indir</h3>
+          <p class="note">Öğrenci bilgileri, seçilen etütler ve öğretmenler tek bir Excel dosyasında. Her indirme o anki güncel listeyi verir.</p>
+          <a class="btn primary" href="/api/admin/export.xlsx">⬇ Excel indir (.xlsx)</a>
+          <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+          <div class="eyebrow">Yaklaşan etütler</div>
+          <div id="upcoming" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-schedule">
+      <div class="row-between">
+        <div><h3>Haftalık program</h3><div class="note">Bir kutuya tıklayarak düzenle, iptal et veya sil. Yanındaki rakam: bir sonraki tarihe kayıtlı öğrenci sayısı.</div></div>
+        <button class="btn yellow sm" id="addSlot">+ Yeni etüt ekle</button>
+      </div>
+      <div class="card admin-sched"><div class="sched" id="aSched"></div></div>
+    </div>
+
+    <div class="tab hidden" id="tab-teachers">
+      <div class="row-between">
+        <div><h3>Öğretmenler</h3><div class="note">Bir öğretmen birden fazla seviyeye/etüde atanabilir. WhatsApp bildirimi bu numaraya gider.</div></div>
+        <button class="btn yellow sm" id="addTeacher">+ Öğretmen ekle</button>
+      </div>
+      <div class="card tbl-wrap"><table class="tbl" id="tTable"></table></div>
+    </div>
+
+    <div class="tab hidden" id="tab-bookings">
+      <div class="row-between">
+        <div><h3>Etüt kayıtları</h3><div class="note">Son 300 kayıt. Tamamı için Excel indir.</div></div>
+        <div class="inline"><input class="input" id="bSearch" placeholder="Ara: isim, telefon, seviye…" style="width:240px"><a class="btn ghost sm" href="/api/admin/export.xlsx">⬇ Excel</a></div>
+      </div>
+      <div class="card tbl-wrap"><table class="tbl" id="bTable"></table></div>
+    </div>
+
+    <div class="tab hidden" id="tab-messages">
+      <div class="row-between"><div><h3>Gönderilen mesajlar</h3><div class="note">SMS ve WhatsApp kayıtları. "Test modu" = sağlayıcı henüz bağlanmadı, mesaj sadece burada görünür.</div></div></div>
+      <div class="card tbl-wrap"><table class="tbl" id="mTable"></table></div>
+    </div>
+
+    <div class="tab hidden" id="tab-settings">
+      <div class="grid" style="align-items:start">
+        <div class="card">
+          <h3 style="margin-bottom:12px">Genel</h3>
+          <div class="grid">
+            <label class="f">Koordinatör adı<input class="input" data-s="coordinator_name"></label>
+            <label class="f">Koordinatör WhatsApp no<input class="input" data-s="coordinator_phone" placeholder="05XXXXXXXXX"></label>
+            <label class="f">Hafta içi sınıf<input class="input" data-s="classroom_weekday"></label>
+            <label class="f">Hafta sonu sınıf<input class="input" data-s="classroom_weekend"></label>
+            <label class="f">Seviye kuralı
+              <select class="input" data-s="level_rule">
+                <option value="own">Sadece kendi seviyesi</option>
+                <option value="own_next">Kendi seviyesi + bir üst (B1 → B1, B2)</option>
+                <option value="own_adjacent">Bir alt + kendi + bir üst (B1 → A2, B1, B2)</option>
+                <option value="all">Kısıtlama yok</option>
+              </select></label>
+            <label class="f">En erken kaç gün sonrası? <small>1 = en erken yarın</small><input class="input" type="number" min="0" max="14" data-s="min_days_ahead"></label>
+            <label class="f full">Öğrenciye giden SMS şablonu <small>{AD_SOYAD} {ETUTLER} {SINIF} otomatik doldurulur</small><textarea class="input" data-s="sms_template" rows="5"></textarea></label>
+            <label class="f">Yeni yönetici şifresi <small>boş bırakırsan değişmez</small><input class="input" type="password" id="newPw" autocomplete="new-password"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h3 style="margin-bottom:6px">SMS & WhatsApp bağlantısı</h3>
+          <div class="help">Hesap bilgileri girilene kadar sistem <b>test modunda</b> çalışır: mesajlar gönderilmez, "Mesajlar" sekmesinde görünür. Kurulum adımları README dosyasında.</div>
+          <div class="grid">
+            <label class="f">SMS sağlayıcı<select class="input" data-s="sms_provider"><option value="log">Test modu (gönderme)</option><option value="netgsm">Netgsm</option></select></label>
+            <label class="f">Netgsm başlık (gönderici adı)<input class="input" data-s="netgsm_header" placeholder="ENGLISHTIME"></label>
+            <label class="f">Netgsm kullanıcı kodu<input class="input" data-s="netgsm_usercode"></label>
+            <label class="f">Netgsm şifre<input class="input" type="password" data-s="netgsm_password"></label>
+            <label class="f">WhatsApp sağlayıcı<select class="input" data-s="wa_provider"><option value="log">Test modu (gönderme)</option><option value="meta">Meta WhatsApp Cloud API</option></select></label>
+            <label class="f">WhatsApp Phone Number ID<input class="input" data-s="wa_phone_id"></label>
+            <label class="f full">WhatsApp erişim anahtarı (token)<input class="input" type="password" data-s="wa_token"></label>
+          </div>
+          <div class="inline" style="margin-top:14px">
+            <input class="input" id="testTo" placeholder="Test numarası 05XX…" style="width:180px">
+            <button class="btn ghost sm" id="testSms">SMS testi</button>
+            <button class="btn ghost sm" id="testWa">WhatsApp testi</button>
+          </div>
+        </div>
+      </div>
+      <div class="actions"><button class="btn primary" id="saveSettings">Ayarları kaydet</button></div>
+    </div>
+  </section>
+</main>
+
+<!-- slot modal -->
+<div class="modal-bg" id="slotBg"><div class="modal">
+  <h3 id="slotTitle">Etüt</h3>
+  <div class="grid">
+    <label class="f">Gün<select class="input" id="sDay"><option value="1">Pazartesi</option><option value="2">Salı</option><option value="3">Çarşamba</option><option value="4">Perşembe</option><option value="5">Cuma</option><option value="6">Cumartesi</option><option value="7">Pazar</option></select></label>
+    <label class="f">Seviye <small>A1 veya A1-A2</small><input class="input" id="sLevel" placeholder="A1"></label>
+    <label class="f">Başlangıç<input class="input" type="time" id="sStart"></label>
+    <label class="f">Bitiş<input class="input" type="time" id="sEnd"></label>
+    <label class="f">Öğretmen<select class="input" id="sTeacher"></select></label>
+    <label class="f">Kontenjan <small>0 = sınırsız</small><input class="input" type="number" min="0" id="sCap" value="0"></label>
+    <label class="f full">Sınıf <small>boşsa hafta içi/sonu sınıfı kullanılır</small><input class="input" id="sRoom"></label>
+    <label class="f full inline" style="display:flex;align-items:center;gap:10px"><input type="checkbox" id="sCancel" style="width:18px;height:18px"> <span>Bu etüt iptal edildi (öğrenciye çizgili gösterilir)</span></label>
+    <label class="f full">İptal açıklaması <small>isteğe bağlı</small><input class="input" id="sNote" placeholder="Bu etüt Eğitim Koordinatörü tarafından iptal edilmiştir."></label>
+  </div>
+  <div class="actions">
+    <button class="btn danger sm" id="sDelete">Sil</button>
+    <span style="flex:1"></span>
+    <button class="btn ghost" id="sClose">Vazgeç</button>
+    <button class="btn primary" id="sSave">Kaydet</button>
+  </div>
+</div></div>
+
+<!-- teacher modal -->
+<div class="modal-bg" id="tBg"><div class="modal">
+  <h3 id="tTitle">Öğretmen</h3>
+  <div class="grid">
+    <label class="f full">Ad Soyad<input class="input" id="tName"></label>
+    <label class="f">WhatsApp numarası<input class="input" id="tPhone" placeholder="05XXXXXXXXX"></label>
+    <label class="f">Not <small>örn: A1, A2 seviyeleri</small><input class="input" id="tNote"></label>
+  </div>
+  <div class="actions"><button class="btn ghost" id="tClose">Vazgeç</button><button class="btn primary" id="tSave">Kaydet</button></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+<script src="/admin.js"></script>
+</body>
+</html>
