@@ -1,0 +1,19 @@
+{
+  "name": "english-time-etut-system",
+  "version": "1.0.0",
+  "description": "English Time Etut System - online etut booking with SMS/WhatsApp notifications",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^4.22.2",
+    "pg": "^8.13.1",
+    "qrcode": "^1.5.4"
+  }
+}
