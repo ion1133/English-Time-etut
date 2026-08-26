@@ -110,7 +110,15 @@
                 <option value="all">Kısıtlama yok</option>
               </select></label>
             <label class="f">En erken kaç gün sonrası? <small>1 = en erken yarın</small><input class="input" type="number" min="0" max="14" data-s="min_days_ahead"></label>
-            <label class="f full">Öğrenciye giden SMS şablonu <small>{AD_SOYAD} {ETUTLER} {SINIF} otomatik doldurulur</small><textarea class="input" data-s="sms_template" rows="5"></textarea></label>
+            <label class="f full">Öğretmene giden WhatsApp şablonu <small>{HOCA_ADI} {AD_SOYAD} {TELEFON} {SEVIYE} {KONU} {ETUTLER} {SINIF} {SUBE} otomatik doldurulur</small><textarea class="input" data-s="wa_teacher_template" rows="9"></textarea></label>
+            <label class="f full">Koordinatöre giden WhatsApp şablonu <small>aynı alanlar kullanılabilir</small><textarea class="input" data-s="wa_coordinator_template" rows="6"></textarea></label>
+            <label class="f">Şube adı <small>şablonlarda {SUBE} olarak kullanılır</small><input class="input" data-s="branch_name"></label>
+            <label class="f">SMS gönderimi <small>Netgsm bağlanana kadar kapalı kalsın</small>
+              <select class="input" data-s="sms_enabled">
+                <option value="">Kapalı — öğrenciye SMS gitmez</option>
+                <option value="1">Açık — Netgsm bilgileri girildiyse gönderir</option>
+              </select></label>
+            <label class="f full">Öğrenciye giden SMS şablonu <small>SMS kapalıyken kullanılmaz. {AD_SOYAD} {ETUTLER} {SINIF}</small><textarea class="input" data-s="sms_template" rows="5"></textarea></label>
             <label class="f">Yeni yönetici şifresi <small>boş bırakırsan değişmez</small><input class="input" type="password" id="newPw" autocomplete="new-password"></label>
           </div>
         </div>

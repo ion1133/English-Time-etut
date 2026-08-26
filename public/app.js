@@ -8,9 +8,9 @@
   const I18N = {
     tr: {
       tag: 'Language Schools & Overseas Education', s1: 'Bilgileriniz', s2: 'Etüt seçimi', s3: 'Onay',
-      e1: 'Etüt kaydı', h1: 'Kaçırdığın ya da anlamadığın konuyu etütte telafi et.',
-      p1: 'Bilgilerini gir, sana uygun etüt saatlerini seç. Kaydın hem sana SMS ile hem de öğretmenine iletilir.',
-      fn: 'Ad', ln: 'Soyad', ph: 'Telefon', phs: '05XX XXX XX XX — SMS bu numaraya gidecek', lv: 'Şu an okuduğun seviye', lvp: 'Seviye seç',
+      e1: 'Etüt kaydı', h1: 'Etüt ile telafi et.',
+      p1: 'Anlamadığın her konu, öğretmeninle birebir çalışabileceğin bir fırsat. Bilgilerini gir, sana uygun saati seç — gerisini biz hallederiz.',
+      fn: 'Ad', ln: 'Soyad', ph: 'Telefon', phs: '05XX XXX XX XX', lv: 'Şu an okuduğun seviye', lvp: 'Seviye seç',
       tp: 'Sormak istediğin konu', tps: 'İsteğe bağlı', tpph: 'Örn: Present perfect, relative clauses…', next: 'Etüt saatlerine geç',
       e2: 'Haftalık etüt programı', h2: 'Katılmak istediğin etütleri seç.', lg1: 'Seçilebilir', lg2: 'Seçildi', lg3: 'Seviyene uygun değil / dolu', lg4: 'İptal edildi',
       back: 'Geri', submit: 'Kaydı tamamla', h3: 'Kaydın alındı!', remind: 'Lütfen etüt saatinden 5 dakika önce sınıfta ol. İyi dersler dileriz.',
@@ -26,9 +26,9 @@
     },
     en: {
       tag: 'Language Schools & Overseas Education', s1: 'Your details', s2: 'Pick etüts', s3: 'Done',
-      e1: 'Etüt registration', h1: 'Catch up on anything you missed or didn\'t understand.',
-      p1: 'Enter your details and choose the etüt sessions that suit you. You\'ll get an SMS confirmation and your teacher is notified.',
-      fn: 'First name', ln: 'Last name', ph: 'Phone', phs: '05XX XXX XX XX — the SMS goes here', lv: 'Your current level', lvp: 'Select level',
+      e1: 'Etüt registration', h1: 'Catch up with an etüt.',
+      p1: 'Every topic you did not follow is a chance to work through it one to one with your teacher. Enter your details, pick a time that suits you, and we will take care of the rest.',
+      fn: 'First name', ln: 'Last name', ph: 'Phone', phs: '05XX XXX XX XX', lv: 'Your current level', lvp: 'Select level',
       tp: 'Topic you want to ask about', tps: 'Optional', tpph: 'e.g. Present perfect, relative clauses…', next: 'Choose etüt times',
       e2: 'Weekly etüt schedule', h2: 'Select the etüts you want to attend.', lg1: 'Available', lg2: 'Selected', lg3: 'Not your level / full', lg4: 'Cancelled',
       back: 'Back', submit: 'Complete registration', h3: 'You\'re registered!', remind: 'Please be in the classroom 5 minutes before the etüt starts. Have a great lesson.',
@@ -106,7 +106,12 @@
   function renderSchedule() {
     const allowed = allowedLevels();
     $('#p2desc').innerHTML = t('desc')(student.level, allowed, cfg.min_days_ahead);
-    $('#classroom').innerHTML = `<span class="pill">${t('wkday')}: <b>${esc(cfg.classroom_weekday)}</b></span><span class="pill">${t('wkend')}: <b>${esc(cfg.classroom_weekend)}</b></span>`;
+    // Rendered as two labelled cards. As small inline chips these were
+    // easy to miss, and a student who misses the room number turns up in
+    // the wrong place.
+    $('#classroom').innerHTML =
+      `<div class="room"><span class="room-label">${t('wkday')}</span><span class="room-name">${esc(cfg.classroom_weekday)}</span></div>` +
+      `<div class="room"><span class="room-label">${t('wkend')}</span><span class="room-name">${esc(cfg.classroom_weekend)}</span></div>`;
     const sched = $('#sched'); sched.innerHTML = '';
     const tabs = $('#daytabs'); tabs.innerHTML = '';
     for (let d = 1; d <= 7; d++) {

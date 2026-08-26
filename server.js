@@ -140,22 +140,74 @@ app.post('/api/bookings', wrap(async (req, res) => {
   const rooms = [...new Set(chosen.map(s => s.classroom || (s.day >= 6 ? st.classroom_weekend : st.classroom_weekday)))].join(' / ');
   const smsBody = (st.sms_template || '')
     .replace('{AD_SOYAD}', fullName).replace('{ETUTLER}', chosen.map(line).join('\n')).replace('{SINIF}', rooms);
-  const results = { sms: await sendSMS(st, phone, smsBody), whatsapp: [] };
+  // SMS is off by default. Netgsm is not connected yet, and a student
+  // promised a message that never arrives is worse than no promise.
+  const smsOn = String(st.sms_enabled ?? '') === '1';
+  const results = {
+    sms: smsOn
+      ? await sendSMS(st, phone, smsBody)
+      : { channel: 'sms', status: 'disabled', detail: 'SMS is switched off in Settings.' },
+    whatsapp: [],
+  };
 
   const byTeacher = new Map();
   for (const s of chosen) if (s.teacher_phone) {
     if (!byTeacher.has(s.teacher_phone)) byTeacher.set(s.teacher_phone, { name: s.teacher_name, slots: [] });
     byTeacher.get(s.teacher_phone).slots.push(s);
   }
-  const topicLine = topic ? `\nKonu: ${topic}` : '';
+  const topicText = topic || '—';
+
+  /**
+   * Fills a message template. Every placeholder is optional, so a
+   * coordinator can shorten or reword the message without breaking it.
+   */
+  const fill = (tpl, vars) =>
+    Object.entries(vars).reduce(
+      (out, [key, value]) => out.split(`{${key}}`).join(value),
+      tpl || ''
+    );
+
+  const TEACHER_DEFAULT =
+    'Merhaba {HOCA_ADI},\n\n' +
+    '{AD_SOYAD} adlı öğrenciniz etüt kaydı oluşturdu.\n\n' +
+    'Seviye: {SEVIYE}\n' +
+    'Konu: {KONU}\n' +
+    'Telefon: {TELEFON}\n\n' +
+    'Etüt saatleri:\n{ETUTLER}\n\n' +
+    'İyi çalışmalar dileriz.\nEnglish Time {SUBE}';
+
+  const COORDINATOR_DEFAULT =
+    'Yeni etüt kaydı\n\n' +
+    'Öğrenci: {AD_SOYAD} ({TELEFON})\n' +
+    'Seviye: {SEVIYE}\n' +
+    'Konu: {KONU}\n\n' +
+    '{ETUTLER}';
+
   for (const [tPhone, t] of byTeacher) {
-    const body = `📚 Yeni etüt kaydı\nÖğrenci: ${fullName} (${phone})\nSeviye: ${level}${topicLine}\n` +
-      t.slots.map(s => `• ${line(s)}`).join('\n');
+    const body = fill(st.wa_teacher_template || TEACHER_DEFAULT, {
+      HOCA_ADI: t.name || 'Hocam',
+      AD_SOYAD: fullName,
+      TELEFON: phone,
+      SEVIYE: level,
+      KONU: topicText,
+      ETUTLER: t.slots.map(s => `• ${line(s)}`).join('\n'),
+      SINIF: rooms,
+      SUBE: st.branch_name || 'Kızılay',
+    });
     results.whatsapp.push(await sendWhatsApp(st, tPhone, body));
   }
+
   if (st.coordinator_phone) {
-    const body = `📋 Yeni etüt kaydı\nÖğrenci: ${fullName} (${phone})\nSeviye: ${level}${topicLine}\n` +
-      chosen.map(s => `• ${line(s)}`).join('\n');
+    const body = fill(st.wa_coordinator_template || COORDINATOR_DEFAULT, {
+      HOCA_ADI: st.coordinator_name || '',
+      AD_SOYAD: fullName,
+      TELEFON: phone,
+      SEVIYE: level,
+      KONU: topicText,
+      ETUTLER: chosen.map(s => `• ${line(s)}`).join('\n'),
+      SINIF: rooms,
+      SUBE: st.branch_name || 'Kızılay',
+    });
     results.whatsapp.push(await sendWhatsApp(st, st.coordinator_phone, body));
   }
 
@@ -199,7 +251,8 @@ admin.get('/overview', wrap(async (req, res) => {
 
 admin.put('/settings', wrap(async (req, res) => {
   const allowed = ['coordinator_name', 'coordinator_phone', 'classroom_weekday', 'classroom_weekend', 'level_rule', 'min_days_ahead',
-    'sms_provider', 'netgsm_usercode', 'netgsm_password', 'netgsm_header', 'wa_provider', 'wa_token', 'wa_phone_id', 'sms_template', 'admin_password'];
+    'sms_provider', 'netgsm_usercode', 'netgsm_password', 'netgsm_header', 'wa_provider', 'wa_token', 'wa_phone_id', 'sms_template',
+    'wa_teacher_template', 'wa_coordinator_template', 'sms_enabled', 'branch_name', 'admin_password'];
   for (const k of allowed) if (k in req.body) {
     if (k === 'admin_password' && String(req.body[k]).length < 6) return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı' });
     await db.setSetting(k, req.body[k]);
@@ -241,10 +294,35 @@ admin.delete('/bookings/:id', wrap(async (req, res) => { await db.q('DELETE FROM
 
 admin.post('/test-message', wrap(async (req, res) => {
   const st = await db.getSettings();
+  /**
+   * Sends the REAL teacher template with sample data, not a generic
+   * "test message". A test that does not look like the live message
+   * proves very little — you want to see the wording, the line breaks
+   * and the placeholders exactly as a teacher will receive them.
+   */
+  const fill = (tpl, vars) =>
+    Object.entries(vars).reduce((out, [k, v]) => out.split(`{${k}}`).join(v), tpl || '');
+
+  const sample = {
+    HOCA_ADI: 'Örnek Hoca',
+    AD_SOYAD: 'Örnek Öğrenci',
+    TELEFON: '05XX XXX XX XX',
+    SEVIYE: 'B1',
+    KONU: 'Present Perfect',
+    ETUTLER: '• Çarşamba 27.08.2026 17:00-18:00 B1',
+    SINIF: st.classroom_weekday || '-',
+    SUBE: st.branch_name || 'Kızılay',
+  };
+
+  const body = req.body.channel === 'whatsapp'
+    ? fill(st.wa_teacher_template || 'English Time Etüt Sistemi – test mesajı', sample)
+    : fill(st.sms_template || 'English Time Etut Sistemi - test mesaji', sample);
+
   const r = req.body.channel === 'whatsapp'
-    ? await sendWhatsApp(st, req.body.to, 'English Time Etüt Sistemi – test mesajı ✅')
-    : await sendSMS(st, req.body.to, 'English Time Etut Sistemi - test mesaji');
-  res.json(r);
+    ? await sendWhatsApp(st, req.body.to, body)
+    : await sendSMS(st, req.body.to, body);
+
+  res.json({ ...r, preview: body });
 }));
 
 admin.get('/qr.png', wrap(async (req, res) => {

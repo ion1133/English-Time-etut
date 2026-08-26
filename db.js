@@ -54,6 +54,31 @@ const DEFAULT_SETTINGS = {
   admin_password: process.env.ADMIN_PASSWORD || 'EnglishTime2026!',
   sms_template:
     'Sayın {AD_SOYAD}, etütünüz:\n{ETUTLER}\nSınıf: {SINIF}\nİyi dersler dileriz. English Time',
+
+  /* SMS is off until Netgsm is connected. Promising a student a message
+   * that never arrives is worse than promising nothing. '1' turns it on. */
+  sms_enabled: '',
+
+  branch_name: 'Kızılay',
+
+  /* Teachers get a properly addressed message, not a raw data dump.
+   * Placeholders: {HOCA_ADI} {AD_SOYAD} {TELEFON} {SEVIYE} {KONU}
+   *               {ETUTLER} {SINIF} {SUBE} */
+  wa_teacher_template:
+    'Merhaba {HOCA_ADI},\n\n' +
+    '{AD_SOYAD} adlı öğrenciniz etüt kaydı oluşturdu.\n\n' +
+    'Seviye: {SEVIYE}\n' +
+    'Konu: {KONU}\n' +
+    'Telefon: {TELEFON}\n\n' +
+    'Etüt saatleri:\n{ETUTLER}\n\n' +
+    'İyi çalışmalar dileriz.\nEnglish Time {SUBE}',
+
+  wa_coordinator_template:
+    'Yeni etüt kaydı\n\n' +
+    'Öğrenci: {AD_SOYAD} ({TELEFON})\n' +
+    'Seviye: {SEVIYE}\n' +
+    'Konu: {KONU}\n\n' +
+    '{ETUTLER}',
 };
 
 async function init() {
