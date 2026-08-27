@@ -74,7 +74,7 @@
 
     <div class="tab hidden" id="tab-teachers">
       <div class="row-between">
-        <div><h3>Öğretmenler</h3><div class="note">Bir öğretmen birden fazla seviyeye/etüde atanabilir. WhatsApp bildirimi bu numaraya gider.</div></div>
+        <div><h3>Öğretmenler</h3><div class="note">Bir öğretmen birden fazla seviyeye/etüde atanabilir. SMS bildirimi bu numaraya gider.</div></div>
         <button class="btn yellow sm" id="addTeacher">+ Öğretmen ekle</button>
       </div>
       <div class="card tbl-wrap"><table class="tbl" id="tTable"></table></div>
@@ -89,7 +89,7 @@
     </div>
 
     <div class="tab hidden" id="tab-messages">
-      <div class="row-between"><div><h3>Gönderilen mesajlar</h3><div class="note">SMS ve WhatsApp kayıtları. "Test modu" = sağlayıcı henüz bağlanmadı, mesaj sadece burada görünür.</div></div></div>
+      <div class="row-between"><div><h3>Gönderilen mesajlar</h3><div class="note">Gönderilen tüm SMS kayıtları. "Test modu" = Netgsm henüz bağlanmadı, mesaj sadece burada görünür.</div></div></div>
       <div class="card tbl-wrap"><table class="tbl" id="mTable"></table></div>
     </div>
 
@@ -99,7 +99,7 @@
           <h3 style="margin-bottom:12px">Genel</h3>
           <div class="grid">
             <label class="f">Koordinatör adı<input class="input" data-s="coordinator_name"></label>
-            <label class="f">Koordinatör WhatsApp no<input class="input" data-s="coordinator_phone" placeholder="05XXXXXXXXX"></label>
+            <label class="f">Koordinatör SMS no<input class="input" data-s="coordinator_phone" placeholder="05XXXXXXXXX"></label>
             <label class="f">Hafta içi sınıf<input class="input" data-s="classroom_weekday"></label>
             <label class="f">Hafta sonu sınıf<input class="input" data-s="classroom_weekend"></label>
             <label class="f">Seviye kuralı
@@ -110,34 +110,29 @@
                 <option value="all">Kısıtlama yok</option>
               </select></label>
             <label class="f">En erken kaç gün sonrası? <small>1 = en erken yarın</small><input class="input" type="number" min="0" max="14" data-s="min_days_ahead"></label>
-            <label class="f full">Öğretmene giden WhatsApp şablonu <small>{HOCA_ADI} {AD_SOYAD} {TELEFON} {SEVIYE} {KONU} {ETUTLER} {SINIF} {SUBE} otomatik doldurulur</small><textarea class="input" data-s="wa_teacher_template" rows="9"></textarea></label>
-            <label class="f full">Koordinatöre giden WhatsApp şablonu <small>aynı alanlar kullanılabilir</small><textarea class="input" data-s="wa_coordinator_template" rows="6"></textarea></label>
-            <label class="f">Şube adı <small>şablonlarda {SUBE} olarak kullanılır</small><input class="input" data-s="branch_name"></label>
-            <label class="f">SMS gönderimi <small>Netgsm bağlanana kadar kapalı kalsın</small>
-              <select class="input" data-s="sms_enabled">
-                <option value="">Kapalı — öğrenciye SMS gitmez</option>
-                <option value="1">Açık — Netgsm bilgileri girildiyse gönderir</option>
-              </select></label>
-            <label class="f full">Öğrenciye giden SMS şablonu <small>SMS kapalıyken kullanılmaz. {AD_SOYAD} {ETUTLER} {SINIF}</small><textarea class="input" data-s="sms_template" rows="5"></textarea></label>
+            <label class="f full">Öğrenciye giden SMS <small>{AD_SOYAD} {ETUTLER} {SINIF} {SEVIYE} {SUBE}</small><textarea class="input" data-s="sms_student_template" rows="3"></textarea></label>
+            <label class="f full">Öğretmene giden SMS <small>{HOCA_ADI} {AD_SOYAD} {TELEFON} {SEVIYE} {KONU} {ETUTLER} {SINIF} {SUBE}</small><textarea class="input" data-s="sms_teacher_template" rows="3"></textarea></label>
+            <label class="f full">Koordinatöre giden SMS <small>aynı alanlar</small><textarea class="input" data-s="sms_coordinator_template" rows="3"></textarea></label>
+            <label class="f full">İptal — öğrenciye giden SMS <small>{AD_SOYAD} {TARIH} {GUN} {SAAT} {SEBEP} {SUBE}</small><textarea class="input" data-s="sms_cancel_template" rows="3"></textarea></label>
+            <label class="f full">İptal — öğretmene giden SMS <small>{HOCA_ADI} {TARIH} {GUN} {SAAT} {SAYI} {SUBE}</small><textarea class="input" data-s="sms_cancel_teacher_template" rows="3"></textarea></label>
+            <label class="f">Şube adı <small>şablonlarda {SUBE}</small><input class="input" data-s="branch_name"></label>
             <label class="f">Yeni yönetici şifresi <small>boş bırakırsan değişmez</small><input class="input" type="password" id="newPw" autocomplete="new-password"></label>
           </div>
         </div>
         <div class="card">
-          <h3 style="margin-bottom:6px">SMS & WhatsApp bağlantısı</h3>
-          <div class="help">Hesap bilgileri girilene kadar sistem <b>test modunda</b> çalışır: mesajlar gönderilmez, "Mesajlar" sekmesinde görünür. Kurulum adımları README dosyasında.</div>
+          <h3 style="margin-bottom:6px">SMS bağlantısı (Netgsm)</h3>
+          <div class="help">Netgsm bilgileri girilene kadar sistem <b>test modunda</b> çalışır: SMS gönderilmez, "Mesajlar" sekmesinde görünür. Tüm mesajlar Türkçe karakter kullanılmadan gönderilir — bir SMS 160 karakter, Türkçe karakterle 70 karaktere düşer.</div>
           <div class="grid">
             <label class="f">SMS sağlayıcı<select class="input" data-s="sms_provider"><option value="log">Test modu (gönderme)</option><option value="netgsm">Netgsm</option></select></label>
             <label class="f">Netgsm başlık (gönderici adı)<input class="input" data-s="netgsm_header" placeholder="ENGLISHTIME"></label>
             <label class="f">Netgsm kullanıcı kodu<input class="input" data-s="netgsm_usercode"></label>
-            <label class="f">Netgsm şifre<input class="input" type="password" data-s="netgsm_password"></label>
-            <label class="f">WhatsApp sağlayıcı<select class="input" data-s="wa_provider"><option value="log">Test modu (gönderme)</option><option value="meta">Meta WhatsApp Cloud API</option></select></label>
-            <label class="f">WhatsApp Phone Number ID<input class="input" data-s="wa_phone_id"></label>
-            <label class="f full">WhatsApp erişim anahtarı (token)<input class="input" type="password" data-s="wa_token"></label>
+            <label class="f">Netgsm şifre<input class="input" type="password" data-s="netgsm_password" autocomplete="off" data-lpignore="true" spellcheck="false"></label>
           </div>
           <div class="inline" style="margin-top:14px">
             <input class="input" id="testTo" placeholder="Test numarası 05XX…" style="width:180px">
-            <button class="btn ghost sm" id="testSms">SMS testi</button>
-            <button class="btn ghost sm" id="testWa">WhatsApp testi</button>
+            <button class="btn ghost sm" id="testSms">Öğrenci SMS testi</button>
+            <button class="btn ghost sm" id="testTeacher">Öğretmen SMS testi</button>
+            <button class="btn ghost sm" id="testCancel">İptal SMS testi</button>
           </div>
         </div>
       </div>
@@ -157,7 +152,8 @@
     <label class="f">Öğretmen<select class="input" id="sTeacher"></select></label>
     <label class="f">Kontenjan <small>0 = sınırsız</small><input class="input" type="number" min="0" id="sCap" value="0"></label>
     <label class="f full">Sınıf <small>boşsa hafta içi/sonu sınıfı kullanılır</small><input class="input" id="sRoom"></label>
-    <label class="f full inline" style="display:flex;align-items:center;gap:10px"><input type="checkbox" id="sCancel" style="width:18px;height:18px"> <span>Bu etüt iptal edildi (öğrenciye çizgili gösterilir)</span></label>
+    <label class="f full inline" style="display:flex;align-items:center;gap:10px"><input type="checkbox" id="sCancel" style="width:18px;height:18px"> <span>Bu tarihteki etüdü iptal et (o güne kayıtlı öğrencilere SMS gider)</span></label>
+    <label class="f full">İptal edilecek tarih <small>sadece bu tarih iptal edilir, sonraki haftalar devam eder</small><input class="input" type="date" id="sCancelDate"></label>
     <label class="f full">İptal açıklaması <small>isteğe bağlı</small><input class="input" id="sNote" placeholder="Bu etüt Eğitim Koordinatörü tarafından iptal edilmiştir."></label>
   </div>
   <div class="actions">
@@ -173,7 +169,7 @@
   <h3 id="tTitle">Öğretmen</h3>
   <div class="grid">
     <label class="f full">Ad Soyad<input class="input" id="tName"></label>
-    <label class="f">WhatsApp numarası<input class="input" id="tPhone" placeholder="05XXXXXXXXX"></label>
+    <label class="f">Telefon numarası<input class="input" id="tPhone" placeholder="05XXXXXXXXX"></label>
     <label class="f">Not <small>örn: A1, A2 seviyeleri</small><input class="input" id="tNote"></label>
   </div>
   <div class="actions"><button class="btn ghost" id="tClose">Vazgeç</button><button class="btn primary" id="tSave">Kaydet</button></div>

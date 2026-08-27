@@ -5,7 +5,7 @@ const cookieParser = require('cookie-parser');
 const ExcelJS = require('exceljs');
 const QRCode = require('qrcode');
 const db = require('./db');
-const { sendSMS, sendWhatsApp } = require('./messaging');
+const { sendSMS } = require('./messaging');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -75,9 +75,20 @@ async function slotsWithMeta(minDaysAhead) {
     ORDER BY s.day, s.start_time, s.id`);
   for (const s of slots) {
     s.next_date = iso(nextDateForDay(s.day, minDaysAhead));
+
     const { rows } = await db.q('SELECT COUNT(*)::int AS n FROM booking_slots WHERE slot_id=$1 AND slot_date=$2', [s.id, s.next_date]);
     s.booked = rows[0].n;
     s.full = s.capacity > 0 && s.booked >= s.capacity;
+
+    /* A cancellation now applies to ONE date, not to the weekly slot for
+     * ever. If this particular date is cancelled the slot is hidden; next
+     * week's occurrence is unaffected. */
+    const { rows: cx } = await db.q(
+      'SELECT note FROM slot_cancellations WHERE slot_id=$1 AND slot_date=$2',
+      [s.id, s.next_date]
+    );
+    s.date_cancelled = cx.length > 0;
+    s.date_cancel_note = cx[0]?.note || '';
   }
   return slots;
 }
@@ -88,8 +99,10 @@ app.get('/api/config', wrap(async (req, res) => {
   const minDays = parseInt(st.min_days_ahead || '1', 10);
   const slots = (await slotsWithMeta(minDays)).map(s => ({
     id: s.id, day: s.day, start_time: s.start_time, end_time: s.end_time, level: s.level,
-    teacher_name: s.teacher_name || '', classroom: s.classroom, cancelled: s.cancelled,
-    cancel_note: s.cancel_note, next_date: s.next_date, full: s.full,
+    teacher_name: s.teacher_name || '', classroom: s.classroom,
+    cancelled: s.cancelled || s.date_cancelled,
+    cancel_note: s.date_cancel_note || s.cancel_note,
+    next_date: s.next_date, full: s.full,
   }));
   res.json({
     levels: LEVELS, slots,
@@ -133,99 +146,70 @@ app.post('/api/bookings', wrap(async (req, res) => {
       [booking.id, s.id, s.next_date, s.day, s.start_time, s.end_time, s.level, s.teacher_name || '']);
   }
 
-  // ---- notifications ----
+  /* ---------- notifications ----------
+   *
+   * SMS only. Every message is written in plain letters so it bills as a
+   * single SMS; messaging.js strips any Turkish characters a coordinator
+   * types into a template.
+   *
+   * Nothing here can fail the booking. The student has already been told
+   * their place is reserved, so a failed SMS is logged in the Mesajlar
+   * tab rather than thrown back at them.
+   */
   const fullName = `${first} ${last}`;
-  const line = s => `${DAYS_TR[s.day]} ${fmtTR(s.next_date)} ${s.start_time}-${s.end_time} ${s.level}` +
-    (s.teacher_name ? ` (${s.teacher_name})` : '');
+  const line = s => `${fmtTR(s.next_date)} ${DAYS_TR[s.day]} ${s.start_time}-${s.end_time} ${s.level}`;
   const rooms = [...new Set(chosen.map(s => s.classroom || (s.day >= 6 ? st.classroom_weekend : st.classroom_weekday)))].join(' / ');
-  const smsBody = (st.sms_template || '')
-    .replace('{AD_SOYAD}', fullName).replace('{ETUTLER}', chosen.map(line).join('\n')).replace('{SINIF}', rooms);
-  // SMS is off by default. Netgsm is not connected yet, and a student
-  // promised a message that never arrives is worse than no promise.
-  const smsOn = String(st.sms_enabled ?? '') === '1';
-  const results = {
-    sms: smsOn
-      ? await sendSMS(st, phone, smsBody)
-      : { channel: 'sms', status: 'disabled', detail: 'SMS is switched off in Settings.' },
-    whatsapp: [],
-  };
 
+  const fill = (tpl, vars) =>
+    Object.entries(vars).reduce((out, [k, v]) => out.split(`{${k}}`).join(v), tpl || '');
+
+  const results = { student: null, teachers: [] };
+
+  // --- the student ---
+  const studentBody = fill(st.sms_student_template || '', {
+    AD_SOYAD: fullName,
+    ETUTLER: chosen.map(line).join(' | '),
+    SINIF: rooms,
+    SEVIYE: level,
+    SUBE: st.branch_name || 'Kizilay',
+  });
+  results.student = await sendSMS(st, phone, studentBody);
+
+  // --- the teachers ---
   const byTeacher = new Map();
   for (const s of chosen) if (s.teacher_phone) {
     if (!byTeacher.has(s.teacher_phone)) byTeacher.set(s.teacher_phone, { name: s.teacher_name, slots: [] });
     byTeacher.get(s.teacher_phone).slots.push(s);
   }
-  const topicText = topic || '—';
-
-  /**
-   * Fills a message template. Every placeholder is optional, so a
-   * coordinator can shorten or reword the message without breaking it.
-   */
-  const fill = (tpl, vars) =>
-    Object.entries(vars).reduce(
-      (out, [key, value]) => out.split(`{${key}}`).join(value),
-      tpl || ''
-    );
-
-  const TEACHER_DEFAULT =
-    'Merhaba {HOCA_ADI},\n\n' +
-    '{AD_SOYAD} adlı öğrenciniz etüt kaydı oluşturdu.\n\n' +
-    'Seviye: {SEVIYE}\n' +
-    'Konu: {KONU}\n' +
-    'Telefon: {TELEFON}\n\n' +
-    'Etüt saatleri:\n{ETUTLER}\n\n' +
-    'İyi çalışmalar dileriz.\nEnglish Time {SUBE}';
-
-  const COORDINATOR_DEFAULT =
-    'Yeni etüt kaydı\n\n' +
-    'Öğrenci: {AD_SOYAD} ({TELEFON})\n' +
-    'Seviye: {SEVIYE}\n' +
-    'Konu: {KONU}\n\n' +
-    '{ETUTLER}';
 
   for (const [tPhone, t] of byTeacher) {
-    const body = fill(st.wa_teacher_template || TEACHER_DEFAULT, {
+    const body = fill(st.sms_teacher_template || '', {
       HOCA_ADI: t.name || 'Hocam',
       AD_SOYAD: fullName,
       TELEFON: phone,
       SEVIYE: level,
-      KONU: topicText,
-      ETUTLER: t.slots.map(s => `• ${line(s)}`).join('\n'),
+      KONU: topic || '-',
+      ETUTLER: t.slots.map(line).join(' | '),
       SINIF: rooms,
-      SUBE: st.branch_name || 'Kızılay',
+      SUBE: st.branch_name || 'Kizilay',
     });
-    results.whatsapp.push(await sendWhatsApp(st, tPhone, body));
+    results.teachers.push(await sendSMS(st, tPhone, body));
   }
 
+  // --- the coordinator, if one is set ---
   if (st.coordinator_phone) {
-    const body = fill(st.wa_coordinator_template || COORDINATOR_DEFAULT, {
-      HOCA_ADI: st.coordinator_name || '',
+    const body = fill(st.sms_coordinator_template || '', {
       AD_SOYAD: fullName,
       TELEFON: phone,
       SEVIYE: level,
-      KONU: topicText,
-      ETUTLER: chosen.map(s => `• ${line(s)}`).join('\n'),
+      KONU: topic || '-',
+      ETUTLER: chosen.map(line).join(' | '),
       SINIF: rooms,
-      SUBE: st.branch_name || 'Kızılay',
+      SUBE: st.branch_name || 'Kizilay',
     });
-    results.whatsapp.push(await sendWhatsApp(st, st.coordinator_phone, body));
+    results.teachers.push(await sendSMS(st, st.coordinator_phone, body));
   }
 
-  res.json({
-    ok: true, booking_id: booking.id,
-    summary: chosen.map(s => ({ id: s.id, day: s.day, day_tr: DAYS_TR[s.day], day_en: DAYS_EN[s.day], date: s.next_date,
-      start_time: s.start_time, end_time: s.end_time, level: s.level, teacher_name: s.teacher_name || '',
-      classroom: s.classroom || (s.day >= 6 ? st.classroom_weekend : st.classroom_weekday) })),
-    sms_mode: results.sms.mode,
-  });
-}));
-
-/* ---------- admin auth ---------- */
-app.post('/api/admin/login', wrap(async (req, res) => {
-  const st = await db.getSettings();
-  if (String(req.body.password || '') !== st.admin_password) return res.status(401).json({ error: 'Şifre hatalı' });
-  res.cookie('et_admin', sign({ role: 'admin', exp: Date.now() + 12 * 3600e3 }),
-    { httpOnly: true, sameSite: 'lax', secure: req.secure, maxAge: 12 * 3600e3 });
   res.json({ ok: true });
 }));
 app.post('/api/admin/logout', (req, res) => { res.clearCookie('et_admin'); res.json({ ok: true }); });
@@ -251,8 +235,10 @@ admin.get('/overview', wrap(async (req, res) => {
 
 admin.put('/settings', wrap(async (req, res) => {
   const allowed = ['coordinator_name', 'coordinator_phone', 'classroom_weekday', 'classroom_weekend', 'level_rule', 'min_days_ahead',
-    'sms_provider', 'netgsm_usercode', 'netgsm_password', 'netgsm_header', 'wa_provider', 'wa_token', 'wa_phone_id', 'sms_template',
-    'wa_teacher_template', 'wa_coordinator_template', 'sms_enabled', 'branch_name', 'admin_password'];
+    'sms_provider', 'netgsm_usercode', 'netgsm_password', 'netgsm_header',
+    'sms_student_template', 'sms_teacher_template', 'sms_coordinator_template',
+    'sms_cancel_template', 'sms_cancel_teacher_template',
+    'branch_name', 'admin_password'];
   for (const k of allowed) if (k in req.body) {
     if (k === 'admin_password' && String(req.body[k]).length < 6) return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı' });
     await db.setSetting(k, req.body[k]);
@@ -285,9 +271,76 @@ admin.put('/slots/:id', wrap(async (req, res) => {
   res.json(s);
 }));
 admin.post('/slots/:id/cancel', wrap(async (req, res) => {
-  const { rows: [s] } = await db.q('UPDATE slots SET cancelled=$1, cancel_note=$2 WHERE id=$3 RETURNING *',
-    [!!req.body.cancelled, String(req.body.note || ''), req.params.id]);
-  res.json(s);
+  /**
+   * Cancels ONE date, not the weekly slot.
+   *
+   * A teacher off sick this Wednesday needs the 3rd cancelled and the
+   * 10th left alone. The old version set a flag on the recurring slot,
+   * which killed that time permanently.
+   *
+   * Every student already booked on that date is texted. That is the
+   * whole point: a cancellation nobody is told about is worse than no
+   * cancellation, because students turn up to an empty room.
+   */
+  const st = await db.getSettings();
+  const slotId = parseInt(req.params.id, 10);
+  const date = String(req.body.date || '').slice(0, 10);
+  const note = String(req.body.note || '').trim();
+  const cancelling = req.body.cancelled !== false;
+
+  if (!date) return res.status(400).json({ error: 'Tarih secilmedi.' });
+
+  const { rows: [slot] } = await db.q(
+    `SELECT s.*, t.name AS teacher_name, t.phone AS teacher_phone
+       FROM slots s LEFT JOIN teachers t ON t.id = s.teacher_id WHERE s.id=$1`, [slotId]);
+  if (!slot) return res.status(404).json({ error: 'Etut bulunamadi.' });
+
+  if (!cancelling) {
+    await db.q('DELETE FROM slot_cancellations WHERE slot_id=$1 AND slot_date=$2', [slotId, date]);
+    return res.json({ ok: true, restored: true });
+  }
+
+  await db.q(
+    `INSERT INTO slot_cancellations (slot_id, slot_date, note) VALUES ($1,$2,$3)
+     ON CONFLICT (slot_id, slot_date) DO UPDATE SET note = EXCLUDED.note`,
+    [slotId, date, note]);
+
+  // Who was booked on this exact date?
+  const { rows: affected } = await db.q(
+    `SELECT DISTINCT b.id, b.first_name, b.last_name, b.phone
+       FROM booking_slots bs JOIN bookings b ON b.id = bs.booking_id
+      WHERE bs.slot_id=$1 AND bs.slot_date=$2`, [slotId, date]);
+
+  const fill = (tpl, vars) =>
+    Object.entries(vars).reduce((out, [k, v]) => out.split(`{${k}}`).join(v), tpl || '');
+
+  const notified = [];
+  for (const person of affected) {
+    const body = fill(st.sms_cancel_template || '', {
+      AD_SOYAD: `${person.first_name} ${person.last_name}`,
+      TARIH: fmtTR(date),
+      GUN: DAYS_TR[slot.day],
+      SAAT: `${slot.start_time}-${slot.end_time}`,
+      SEBEP: note || '-',
+      SUBE: st.branch_name || 'Kizilay',
+    });
+    notified.push(await sendSMS(st, person.phone, body));
+  }
+
+  // Tell the teacher too, so nobody travels in for a cancelled session.
+  if (slot.teacher_phone) {
+    const body = fill(st.sms_cancel_teacher_template || '', {
+      HOCA_ADI: slot.teacher_name || 'Hocam',
+      TARIH: fmtTR(date),
+      GUN: DAYS_TR[slot.day],
+      SAAT: `${slot.start_time}-${slot.end_time}`,
+      SAYI: String(affected.length),
+      SUBE: st.branch_name || 'Kizilay',
+    });
+    notified.push(await sendSMS(st, slot.teacher_phone, body));
+  }
+
+  res.json({ ok: true, notified: affected.length, results: notified });
 }));
 admin.delete('/slots/:id', wrap(async (req, res) => { await db.q('DELETE FROM slots WHERE id=$1', [req.params.id]); res.json({ ok: true }); }));
 admin.delete('/bookings/:id', wrap(async (req, res) => { await db.q('DELETE FROM bookings WHERE id=$1', [req.params.id]); res.json({ ok: true }); }));
@@ -295,32 +348,37 @@ admin.delete('/bookings/:id', wrap(async (req, res) => { await db.q('DELETE FROM
 admin.post('/test-message', wrap(async (req, res) => {
   const st = await db.getSettings();
   /**
-   * Sends the REAL teacher template with sample data, not a generic
-   * "test message". A test that does not look like the live message
-   * proves very little — you want to see the wording, the line breaks
-   * and the placeholders exactly as a teacher will receive them.
+   * Sends the REAL student template with sample data, not a generic test
+   * string. A test that does not look like the live message proves very
+   * little — you want to see the exact wording and how many SMS it bills.
    */
   const fill = (tpl, vars) =>
     Object.entries(vars).reduce((out, [k, v]) => out.split(`{${k}}`).join(v), tpl || '');
 
   const sample = {
-    HOCA_ADI: 'Örnek Hoca',
-    AD_SOYAD: 'Örnek Öğrenci',
-    TELEFON: '05XX XXX XX XX',
+    HOCA_ADI: 'Ornek Hoca',
+    AD_SOYAD: 'Ornek Ogrenci',
+    TELEFON: '05XXXXXXXXX',
     SEVIYE: 'B1',
     KONU: 'Present Perfect',
-    ETUTLER: '• Çarşamba 27.08.2026 17:00-18:00 B1',
+    ETUTLER: '03.09.2026 Carsamba 17:00-18:00 B1',
     SINIF: st.classroom_weekday || '-',
-    SUBE: st.branch_name || 'Kızılay',
+    TARIH: '03.09.2026',
+    GUN: 'Carsamba',
+    SAAT: '17:00-18:00',
+    SEBEP: 'Ogretmen izinli',
+    SAYI: '3',
+    SUBE: st.branch_name || 'Kizilay',
   };
 
-  const body = req.body.channel === 'whatsapp'
-    ? fill(st.wa_teacher_template || 'English Time Etüt Sistemi – test mesajı', sample)
-    : fill(st.sms_template || 'English Time Etut Sistemi - test mesaji', sample);
+  const which = req.body.template || 'student';
+  const tpl =
+    which === 'teacher' ? st.sms_teacher_template :
+    which === 'cancel' ? st.sms_cancel_template :
+    st.sms_student_template;
 
-  const r = req.body.channel === 'whatsapp'
-    ? await sendWhatsApp(st, req.body.to, body)
-    : await sendSMS(st, req.body.to, body);
+  const body = fill(tpl || 'English Time Etut Sistemi - test mesaji', sample);
+  const r = await sendSMS(st, req.body.to, body);
 
   res.json({ ...r, preview: body });
 }));

@@ -1,90 +1,137 @@
-// Messaging: SMS via Netgsm, WhatsApp via Meta Cloud API. Falls back to "log" mode
-// (message is stored and visible in the admin panel) until credentials are entered.
-const { q } = require('./db');
+/**
+ * messaging.js — SMS only, via Netgsm.
+ *
+ * WhatsApp was removed deliberately. Meta's Cloud API forbids sending
+ * free text to anyone who has not messaged your business number in the
+ * last 24 hours, which makes it useless for notifying teachers who never
+ * write to the school. Working around it needs a registered SIM plus a
+ * template approved by Meta for every message type — days of setup for
+ * something SMS does immediately.
+ *
+ * MESSAGES ARE WRITTEN WITHOUT TURKISH CHARACTERS. An SMS holds 160
+ * plain characters but only 70 if it contains ğ ş ı İ ç ö ü, so a single
+ * Turkish message often bills as three. "etudunuz" instead of "etüdünüz"
+ * is less pretty and roughly a third of the cost, which matters when
+ * every booking sends two messages.
+ */
+const db = require('./db');
 
-function normalizeTR(phone) {
-  // Accepts 05XX XXX XX XX / 5XXXXXXXXX / +905XXXXXXXXX -> returns 905XXXXXXXXX
-  let d = String(phone || '').replace(/\D/g, '');
-  if (d.startsWith('90')) d = d.slice(2);
-  if (d.startsWith('0')) d = d.slice(1);
-  return '90' + d;
+/** Turkish mobile numbers, normalised to 90XXXXXXXXXX. */
+function normalizeTR(input) {
+  let n = String(input || '').replace(/\D/g, '');
+  if (n.startsWith('00')) n = n.slice(2);
+  if (n.startsWith('0')) n = n.slice(1);
+  if (!n.startsWith('90')) n = '90' + n;
+  return n;
 }
 
-async function log(channel, recipient, body, status, detail = '') {
-  await q('INSERT INTO messages (channel,recipient,body,status,detail) VALUES ($1,$2,$3,$4,$5)',
-    [channel, recipient, body, status, String(detail).slice(0, 500)]);
+/**
+ * Strips Turkish characters so a message stays in the 160-character GSM
+ * alphabet. Applied to every outgoing SMS, so a coordinator who types
+ * Turkish into a template does not silently triple the cost.
+ */
+function toGsm(text) {
+  const map = {
+    'ğ': 'g', 'Ğ': 'G', 'ü': 'u', 'Ü': 'U', 'ş': 's', 'Ş': 'S',
+    'ı': 'i', 'İ': 'I', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C',
+    'â': 'a', 'Â': 'A', 'î': 'i', 'û': 'u',
+    '\u2018': "'", '\u2019': "'", '\u201C': '"', '\u201D': '"',
+    '\u2013': '-', '\u2014': '-', '\u2026': '...',
+  };
+  return String(text || '').replace(/[^\x00-\x7F]/g, (ch) => map[ch] ?? '');
 }
 
-async function sendSMS(settings, to, body) {
-  const recipient = normalizeTR(to);
-  if (settings.sms_provider !== 'netgsm' || !settings.netgsm_usercode) {
-    await log('sms', recipient, body, 'logged', 'Test mode: SMS provider not configured');
-    return { ok: true, mode: 'log' };
-  }
+/** How many SMS a message will actually bill as. Shown in the log. */
+function smsParts(text) {
+  const len = String(text || '').length;
+  return len <= 160 ? 1 : Math.ceil(len / 153);
+}
+
+async function log(recipient, body, status, detail) {
   try {
-    // Netgsm HTTP API (GET) - https://www.netgsm.com.tr/dokuman/
-    const url = new URL('https://api.netgsm.com.tr/sms/send/get');
-    url.searchParams.set('usercode', settings.netgsm_usercode);
-    url.searchParams.set('password', settings.netgsm_password);
-    url.searchParams.set('gsmno', recipient);
-    url.searchParams.set('message', body);
-    url.searchParams.set('msgheader', settings.netgsm_header);
-    url.searchParams.set('dil', 'TR');
-    const res = await fetch(url);
-    const text = (await res.text()).trim();
-    const ok = /^0[0-2]\s/.test(text) || /^0[0-2]$/.test(text.split(' ')[0]);
-    await log('sms', recipient, body, ok ? 'sent' : 'failed', 'Netgsm: ' + text);
-    return { ok, mode: 'netgsm', detail: text };
+    await db.q(
+      'INSERT INTO messages (channel, recipient, body, status, detail) VALUES ($1,$2,$3,$4,$5)',
+      ['sms', recipient, body, status, String(detail || '')]
+    );
   } catch (e) {
-    await log('sms', recipient, body, 'failed', e.message);
-    return { ok: false, error: e.message };
+    console.error('Could not log message:', e.message);
   }
 }
 
-async function sendWhatsApp(settings, to, body) {
+/**
+ * Sends one SMS.
+ *
+ * Never throws. A failed notification must not roll back a booking that
+ * the student has already been told is confirmed — the failure is logged
+ * and visible in the Mesajlar tab instead.
+ */
+async function sendSMS(settings, to, rawBody) {
   const recipient = normalizeTR(to);
-  if (!recipient || recipient.length < 12) return { ok: false, error: 'no recipient' };
-  if (settings.wa_provider !== 'meta' || !settings.wa_token || !settings.wa_phone_id) {
-    await log('whatsapp', recipient, body, 'logged', 'Test mode: WhatsApp API not configured');
-    return { ok: true, mode: 'log' };
+  const body = toGsm(rawBody);
+
+  if (!recipient || recipient.length < 12) {
+    await log(recipient || '(bos)', body, 'failed', 'Gecersiz telefon numarasi');
+    return { ok: false, error: 'invalid number' };
   }
+
+  const ready =
+    settings.sms_provider === 'netgsm' &&
+    settings.netgsm_usercode &&
+    settings.netgsm_password &&
+    settings.netgsm_header;
+
+  if (!ready) {
+    await log(recipient, body, 'logged',
+      `Test modu — gonderilmedi (${smsParts(body)} SMS olacakti)`);
+    return { ok: true, mode: 'log', parts: smsParts(body) };
+  }
+
   try {
-    const res = await fetch(`https://graph.facebook.com/v20.0/${settings.wa_phone_id}/messages`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${settings.wa_token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp', to: recipient, type: 'text',
-        text: { preview_url: false, body },
-      }),
+    // Netgsm's REST endpoint. Form-encoded, and it answers with a plain
+    // text code rather than JSON.
+    const params = new URLSearchParams({
+      usercode: settings.netgsm_usercode,
+      password: settings.netgsm_password,
+      gsmno: recipient,
+      message: body,
+      msgheader: settings.netgsm_header,
+      dil: 'TR',
     });
-    const data = await res.json();
-    const ok = res.ok && !data.error;
 
-    /**
-     * Meta returns a nested error object. Passing it straight to the UI
-     * produced the useless "Hata: [object Object]". These three fields
-     * are the ones that actually say what went wrong:
-     *
-     *   message        — the headline reason
-     *   error_data     — usually the specific detail, e.g. the recipient
-     *                    is not on the allowed list
-     *   error_subcode  — occasionally the only clue
-     */
-    const err = data.error || {};
-    const reason = ok
-      ? null
-      : [err.message, err.error_data?.details, err.error_user_msg]
-          .filter(Boolean)
-          .join(' — ') || `HTTP ${res.status}`;
+    const res = await fetch('https://api.netgsm.com.tr/sms/send/get/?' + params.toString(), {
+      method: 'GET',
+    });
+    const text = (await res.text()).trim();
+    const code = text.split(' ')[0];
 
-    await log('whatsapp', recipient, body, ok ? 'sent' : 'failed',
-      reason || JSON.stringify(data.messages || data));
+    // Netgsm replies "00 <messageid>" or "01 <messageid>" on success;
+    // anything else is an error code that needs translating.
+    const ok = code === '00' || code === '01' || code === '02';
 
-    return { ok, mode: 'meta', detail: reason, raw: data };
+    await log(recipient, body, ok ? 'sent' : 'failed',
+      ok ? `${smsParts(body)} SMS · ${text}` : netgsmError(code, text));
+
+    return { ok, mode: 'netgsm', detail: ok ? text : netgsmError(code, text), parts: smsParts(body) };
   } catch (e) {
-    await log('whatsapp', recipient, body, 'failed', e.message);
+    await log(recipient, body, 'failed', e.message);
     return { ok: false, error: e.message };
   }
 }
 
-module.exports = { sendSMS, sendWhatsApp, normalizeTR };
+/** Netgsm returns bare numbers. These are the ones that actually occur. */
+function netgsmError(code, raw) {
+  const errors = {
+    '20': 'Mesaj metni cok uzun veya karakter hatasi',
+    '30': 'Kullanici adi veya sifre hatali, ya da API erisimi kapali',
+    '40': 'Gonderici adi (baslik) sistemde tanimli degil',
+    '50': 'Aboneligi olmayan numara',
+    '51': 'Aboneligi olmayan numara',
+    '70': 'Hatali sorgulama - parametreleri kontrol edin',
+    '80': 'Gonderim sinir asimi',
+    '85': 'Ayni numaraya cok fazla gonderim',
+    '100': 'Bakiye yetersiz',
+  };
+  return errors[code] ? `${code}: ${errors[code]}` : `Netgsm yaniti: ${raw}`;
+}
+
+module.exports = { sendSMS, normalizeTR, toGsm, smsParts };

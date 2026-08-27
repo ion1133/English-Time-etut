@@ -8,7 +8,7 @@
   const I18N = {
     tr: {
       tag: 'Language Schools & Overseas Education', s1: 'Bilgileriniz', s2: 'Etüt seçimi', s3: 'Onay',
-      e1: 'Etüt kaydı', h1: 'Etüt ile telafi et.',
+      e1: 'Etüt kaydı', h1: 'Anlamadığın konuyu etüt ile telafi et.',
       p1: 'Anlamadığın her konu, öğretmeninle birebir çalışabileceğin bir fırsat. Bilgilerini gir, sana uygun saati seç — gerisini biz hallederiz.',
       fn: 'Ad', ln: 'Soyad', ph: 'Telefon', phs: '05XX XXX XX XX', lv: 'Şu an okuduğun seviye', lvp: 'Seviye seç',
       tp: 'Sormak istediğin konu', tps: 'İsteğe bağlı', tpph: 'Örn: Present perfect, relative clauses…', next: 'Etüt saatlerine geç',
@@ -26,7 +26,7 @@
     },
     en: {
       tag: 'Language Schools & Overseas Education', s1: 'Your details', s2: 'Pick etüts', s3: 'Done',
-      e1: 'Etüt registration', h1: 'Catch up with an etüt.',
+      e1: 'Etüt registration', h1: 'Catch up on what you did not understand.',
       p1: 'Every topic you did not follow is a chance to work through it one to one with your teacher. Enter your details, pick a time that suits you, and we will take care of the rest.',
       fn: 'First name', ln: 'Last name', ph: 'Phone', phs: '05XX XXX XX XX', lv: 'Your current level', lvp: 'Select level',
       tp: 'Topic you want to ask about', tps: 'Optional', tpph: 'e.g. Present perfect, relative clauses…', next: 'Choose etüt times',

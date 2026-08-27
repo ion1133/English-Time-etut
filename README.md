@@ -1,10 +1,36 @@
-# English Time Etüt System
+# English Time Etüt Sistemi
 
-Online etüt booking for English Time. Students scan a QR code, fill in their details, pick etüt slots (glowing selection), get an SMS; teachers and the Educational Coordinator get a WhatsApp; the coordinator manages everything from `/admin`.
+Öğrenci etüt kayıt sistemi. **Bildirimler yalnızca SMS ile gönderilir (Netgsm).**
 
-**Free to run** on Render (website) + Neon (database).
+## Neden WhatsApp yok?
 
----
+Meta'nın WhatsApp Cloud API'si, size son 24 saat içinde mesaj yazmamış
+birine serbest metin göndermenize izin vermez. Öğretmenler okula WhatsApp'tan
+yazmadığı için bu kural bildirimleri kullanılamaz hale getirir. Aşmak için
+kayıtlı bir SIM ve Meta tarafından onaylanmış şablonlar gerekir — SMS'in
+anında yaptığı işi günler süren bir kuruluma çevirir.
+
+## SMS karakter kuralı
+
+Bir SMS **160 karakterdir**. Metinde ğ ş ı İ ç ö ü gibi Türkçe karakterler
+varsa limit **70 karaktere** düşer — yani aynı mesaj 3 SMS olarak faturalanır.
+
+Bu yüzden tüm şablonlar Türkçe karaktersiz yazılmıştır ("etudunuz"). Sunucu
+şablona yazılan Türkçe karakterleri de otomatik olarak sadeleştirir.
+
+## Netgsm kurulumu
+
+1. netgsm.com.tr üzerinden hesap açın
+2. Kontör yükleyin (SMS ön ödemelidir)
+3. **Gönderici adı (başlık)** başvurusu yapın — örn. ENGLISHTIME.
+   BTK onayı gerekir, birkaç iş günü sürer, firma evrakı istenir.
+4. Yönetim panelinde: SMS sağlayıcı → Netgsm, kullanıcı kodu, şifre ve
+   başlık alanlarını doldurun
+5. "Öğrenci SMS testi" ile kendi numaranıza deneme gönderin
+
+Başlık onaylanana kadar sistem test modunda kalır: mesajlar gönderilmez,
+"Mesajlar" sekmesinde görünür.
+
 
 ## 1 · Put the code on GitHub (5 min)
 

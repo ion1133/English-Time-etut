@@ -81,7 +81,11 @@
     $('#sTeacher').innerHTML = '<option value="">— seçilmedi —</option>' + D.teachers.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
     $('#sDay').value = s?.day || 1; $('#sLevel').value = s?.level || ''; $('#sStart').value = s?.start_time || ''; $('#sEnd').value = s?.end_time || '';
     $('#sTeacher').value = s?.teacher_id || ''; $('#sCap').value = s?.capacity || 0; $('#sRoom').value = s?.classroom || '';
-    $('#sCancel').checked = !!s?.cancelled; $('#sNote').value = s?.cancel_note || '';
+    $('#sCancel').checked = !!s?.cancelled;
+    $('#sNote').value = s?.cancel_note || '';
+    // Defaults to the next occurrence of this weekly slot, which is
+    // almost always the one being cancelled.
+    $('#sCancelDate').value = s?.next_date || '';
     $('#sDelete').classList.toggle('hidden', !s);
     $('#slotBg').classList.add('show');
   }
@@ -92,7 +96,18 @@
       teacher_id: $('#sTeacher').value || null, capacity: $('#sCap').value, classroom: $('#sRoom').value.trim() };
     if (!body.level || !body.start_time || !body.end_time) return toast('Seviye ve saatleri doldur', true);
     const saved = curSlot ? await api('/api/admin/slots/' + curSlot.id, 'PUT', body) : await api('/api/admin/slots', 'POST', body);
-    await api(`/api/admin/slots/${saved.id}/cancel`, 'POST', { cancelled: $('#sCancel').checked, note: $('#sNote').value.trim() });
+    // Cancelling texts every student booked on THAT DATE, so the result
+    // is reported back rather than failing silently.
+    const cx = await api(`/api/admin/slots/${saved.id}/cancel`, 'POST', {
+      cancelled: $('#sCancel').checked,
+      date: $('#sCancelDate').value,
+      note: $('#sNote').value.trim(),
+    });
+    if ($('#sCancel').checked && cx && typeof cx.notified === 'number') {
+      toast(cx.notified > 0
+        ? `${cx.notified} ogrenciye iptal SMS'i gonderildi`
+        : 'Iptal edildi. Bu tarihte kayitli ogrenci yoktu.');
+    }
     $('#slotBg').classList.remove('show'); toast('Kaydedildi'); load();
   };
   $('#sDelete').onclick = async () => { if (!confirm('Bu etüt programdan silinsin mi?')) return; await api('/api/admin/slots/' + curSlot.id, 'DELETE'); $('#slotBg').classList.remove('show'); toast('Silindi'); load(); };
@@ -104,7 +119,7 @@
       return `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.phone)}</td><td>${esc(t.note)}</td><td>${n} etüt</td>
         <td class="inline"><button class="btn ghost sm" data-e="${t.id}">Düzenle</button><button class="btn danger sm" data-d="${t.id}">Sil</button></td></tr>`;
     }).join('');
-    $('#tTable').innerHTML = `<tr><th>Ad Soyad</th><th>WhatsApp</th><th>Not</th><th>Atama</th><th></th></tr>${rows || '<tr><td colspan=5 class="note">Henüz öğretmen yok. "Öğretmen ekle" ile başla.</td></tr>'}`;
+    $('#tTable').innerHTML = `<tr><th>Ad Soyad</th><th>Telefon</th><th>Not</th><th>Atama</th><th></th></tr>${rows || '<tr><td colspan=5 class="note">Henüz öğretmen yok. "Öğretmen ekle" ile başla.</td></tr>'}`;
     $('#tTable').querySelectorAll('[data-e]').forEach(b => b.onclick = () => openTeacher(D.teachers.find(t => t.id == b.dataset.e)));
     $('#tTable').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('Öğretmen silinsin mi?')) return; await api('/api/admin/teachers/' + b.dataset.d, 'DELETE'); load(); });
   }
@@ -135,31 +150,51 @@
   function renderMessages() {
     const cls = { sent: 'g', failed: 'r', logged: 'b' }, lbl = { sent: 'Gönderildi', failed: 'Hata', logged: 'Test modu' };
     $('#mTable').innerHTML = `<tr><th>Zaman</th><th>Kanal</th><th>Alıcı</th><th>Durum</th><th>Mesaj</th></tr>` +
-      (D.messages.map(m => `<tr><td>${fmtTs(m.created_at)}</td><td>${m.channel === 'sms' ? 'SMS' : 'WhatsApp'}</td><td>${esc(m.recipient)}</td>
+      (D.messages.map(m => `<tr><td>${fmtTs(m.created_at)}</td><td>SMS</td><td>${esc(m.recipient)}</td>
         <td><span class="tag ${cls[m.status]}">${lbl[m.status]}</span><br><small class="note">${esc(m.detail)}</small></td><td style="white-space:pre-wrap;max-width:420px">${esc(m.body)}</td></tr>`).join('') || '<tr><td colspan=5 class="note">Henüz mesaj yok.</td></tr>');
   }
 
   /* ---- settings ---- */
   function fillSettings() { document.querySelectorAll('[data-s]').forEach(el => el.value = D.settings[el.dataset.s] ?? ''); }
   $('#saveSettings').onclick = async () => {
-    const body = {}; document.querySelectorAll('[data-s]').forEach(el => body[el.dataset.s] = el.value);
+    const body = {};
+    const SECRETS = ['wa_token', 'netgsm_password', 'admin_password'];
+    document.querySelectorAll('[data-s]').forEach(el => {
+      const key = el.dataset.s;
+      const value = el.value;
+      // A secret is only saved when it has actually been typed and is not
+      // the unchanged value already stored. This stops a browser autofill,
+      // or an empty box, from silently destroying a working token.
+      if (SECRETS.includes(key)) {
+        if (!value || value === D.settings[key]) return;
+      }
+      body[key] = value;
+    });
     if ($('#newPw').value) body.admin_password = $('#newPw').value;
     await api('/api/admin/settings', 'PUT', body); $('#newPw').value = ''; toast('Ayarlar kaydedildi'); load();
   };
-  $('#testSms').onclick = async () => { const r = await api('/api/admin/test-message', 'POST', { channel: 'sms', to: $('#testTo').value }); toast(r.mode === 'log' ? 'Test modunda kaydedildi (Mesajlar sekmesi)' : r.ok ? 'SMS gönderildi' : 'Hata: ' + String(r.detail || r.error || 'bilinmiyor'), !r.ok); load(); };
-  $('#testWa').onclick = async () => {
-    const r = await api('/api/admin/test-message', 'POST', { channel: 'whatsapp', to: $('#testTo').value });
-    // The preview is shown even in test mode, so the wording can be
-    // checked before WhatsApp is connected at all.
-    if (r.preview) console.log('Öğretmene gidecek mesaj:\n\n' + r.preview);
+  /**
+   * Each button previews AND sends the real template with sample data,
+   * so the wording can be checked exactly as a recipient will see it.
+   */
+  const smsTest = (template, label) => async () => {
+    const r = await api('/api/admin/test-message', 'POST', {
+      channel: 'sms', template, to: $('#testTo').value,
+    });
+    if (r.preview) console.log(label + ':\n' + r.preview);
     toast(
       r.mode === 'log'
-        ? 'Test modunda — gönderilmedi. WhatsApp sağlayıcı ayarını "Meta" yapın.'
-        : r.ok ? 'WhatsApp gönderildi ✅' : 'Hata: ' + String(r.detail || r.error || 'bilinmiyor'),
+        ? 'Test modu - gonderilmedi. Netgsm bilgilerini girin. (' + (r.parts || 1) + ' SMS olacakti)'
+        : r.ok ? label + ' gonderildi (' + (r.parts || 1) + ' SMS)'
+        : 'Hata: ' + String(r.detail || r.error || 'bilinmiyor'),
       !r.ok || r.mode === 'log'
     );
     load();
   };
+
+  $('#testSms').onclick = smsTest('student', 'Ogrenci SMS');
+  $('#testTeacher').onclick = smsTest('teacher', 'Ogretmen SMS');
+  $('#testCancel').onclick = smsTest('cancel', 'Iptal SMS');
 
   document.querySelectorAll('.modal-bg').forEach(m => m.onclick = e => { if (e.target === m) m.classList.remove('show'); });
   start();

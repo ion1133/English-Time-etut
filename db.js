@@ -47,38 +47,30 @@ const DEFAULT_SETTINGS = {
   netgsm_usercode: '',
   netgsm_password: '',
   netgsm_header: '',
-  wa_provider: 'log', // log | meta
-  wa_token: '',
-  wa_phone_id: '',
   site_url: '',
   admin_password: process.env.ADMIN_PASSWORD || 'EnglishTime2026!',
-  sms_template:
-    'Sayın {AD_SOYAD}, etütünüz:\n{ETUTLER}\nSınıf: {SINIF}\nİyi dersler dileriz. English Time',
+  /* Every template is written in PLAIN LETTERS, no Turkish characters.
+   * An SMS holds 160 plain characters but only 70 with Turkish letters,
+   * so "etudunuz" bills as one message where "etüdünüz" bills as three.
+   * messaging.js strips any Turkish typed in here, but writing it plain
+   * keeps the preview honest about the length. */
 
-  /* SMS is off until Netgsm is connected. Promising a student a message
-   * that never arrives is worse than promising nothing. '1' turns it on. */
-  sms_enabled: '',
+  sms_student_template:
+    'Sayin {AD_SOYAD}, etut kaydiniz olusturuldu: {ETUTLER}. Sinif: {SINIF}. English Time {SUBE}',
 
-  branch_name: 'Kızılay',
+  sms_teacher_template:
+    '{HOCA_ADI}, yeni etut kaydi: {AD_SOYAD} ({TELEFON}) {SEVIYE}. {ETUTLER}. Konu: {KONU}',
 
-  /* Teachers get a properly addressed message, not a raw data dump.
-   * Placeholders: {HOCA_ADI} {AD_SOYAD} {TELEFON} {SEVIYE} {KONU}
-   *               {ETUTLER} {SINIF} {SUBE} */
-  wa_teacher_template:
-    'Merhaba {HOCA_ADI},\n\n' +
-    '{AD_SOYAD} adlı öğrenciniz etüt kaydı oluşturdu.\n\n' +
-    'Seviye: {SEVIYE}\n' +
-    'Konu: {KONU}\n' +
-    'Telefon: {TELEFON}\n\n' +
-    'Etüt saatleri:\n{ETUTLER}\n\n' +
-    'İyi çalışmalar dileriz.\nEnglish Time {SUBE}',
+  sms_coordinator_template:
+    'Yeni etut kaydi: {AD_SOYAD} ({TELEFON}) {SEVIYE}. {ETUTLER}',
 
-  wa_coordinator_template:
-    'Yeni etüt kaydı\n\n' +
-    'Öğrenci: {AD_SOYAD} ({TELEFON})\n' +
-    'Seviye: {SEVIYE}\n' +
-    'Konu: {KONU}\n\n' +
-    '{ETUTLER}',
+  sms_cancel_template:
+    'Sayin {AD_SOYAD}, {TARIH} {GUN} {SAAT} etudunuz iptal edilmistir. English Time {SUBE}',
+
+  sms_cancel_teacher_template:
+    '{HOCA_ADI}, {TARIH} {GUN} {SAAT} etudu iptal edildi. {SAYI} ogrenciye bilgi verildi.',
+
+  branch_name: 'Kizilay',
 };
 
 async function init() {
@@ -113,6 +105,21 @@ async function init() {
       day INT NOT NULL, start_time TEXT NOT NULL, end_time TEXT NOT NULL,
       level TEXT NOT NULL, teacher_name TEXT NOT NULL DEFAULT ''
     );
+    /* Per-DATE cancellations.
+     *
+     * Slots are weekly and recurring ("Wednesday 17:00, B1"), so the old
+     * cancelled flag on the slot killed that time forever. A teacher off
+     * sick this Wednesday needs the 3rd cancelled and the 10th left
+     * alone, which is what this table records. */
+    CREATE TABLE IF NOT EXISTS slot_cancellations (
+      id SERIAL PRIMARY KEY,
+      slot_id INT REFERENCES slots(id) ON DELETE CASCADE,
+      slot_date DATE NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (slot_id, slot_date)
+    );
+
     CREATE TABLE IF NOT EXISTS messages (
       id SERIAL PRIMARY KEY,
       channel TEXT NOT NULL,            -- sms | whatsapp
