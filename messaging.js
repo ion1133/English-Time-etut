@@ -59,8 +59,28 @@ async function sendWhatsApp(settings, to, body) {
     });
     const data = await res.json();
     const ok = res.ok && !data.error;
-    await log('whatsapp', recipient, body, ok ? 'sent' : 'failed', JSON.stringify(data.error || data.messages || data));
-    return { ok, mode: 'meta', detail: data };
+
+    /**
+     * Meta returns a nested error object. Passing it straight to the UI
+     * produced the useless "Hata: [object Object]". These three fields
+     * are the ones that actually say what went wrong:
+     *
+     *   message        — the headline reason
+     *   error_data     — usually the specific detail, e.g. the recipient
+     *                    is not on the allowed list
+     *   error_subcode  — occasionally the only clue
+     */
+    const err = data.error || {};
+    const reason = ok
+      ? null
+      : [err.message, err.error_data?.details, err.error_user_msg]
+          .filter(Boolean)
+          .join(' — ') || `HTTP ${res.status}`;
+
+    await log('whatsapp', recipient, body, ok ? 'sent' : 'failed',
+      reason || JSON.stringify(data.messages || data));
+
+    return { ok, mode: 'meta', detail: reason, raw: data };
   } catch (e) {
     await log('whatsapp', recipient, body, 'failed', e.message);
     return { ok: false, error: e.message };
