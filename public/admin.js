@@ -146,7 +146,7 @@
     if ($('#newPw').value) body.admin_password = $('#newPw').value;
     await api('/api/admin/settings', 'PUT', body); $('#newPw').value = ''; toast('Ayarlar kaydedildi'); load();
   };
-  $('#testSms').onclick = async () => { const r = await api('/api/admin/test-message', 'POST', { channel: 'sms', to: $('#testTo').value }); toast(r.mode === 'log' ? 'Test modunda kaydedildi (Mesajlar sekmesi)' : r.ok ? 'SMS gönderildi' : 'Hata: ' + (r.detail || r.error), !r.ok); load(); };
+  $('#testSms').onclick = async () => { const r = await api('/api/admin/test-message', 'POST', { channel: 'sms', to: $('#testTo').value }); toast(r.mode === 'log' ? 'Test modunda kaydedildi (Mesajlar sekmesi)' : r.ok ? 'SMS gönderildi' : 'Hata: ' + String(r.detail || r.error || 'bilinmiyor'), !r.ok); load(); };
   $('#testWa').onclick = async () => {
     const r = await api('/api/admin/test-message', 'POST', { channel: 'whatsapp', to: $('#testTo').value });
     // The preview is shown even in test mode, so the wording can be
@@ -155,7 +155,7 @@
     toast(
       r.mode === 'log'
         ? 'Test modunda — gönderilmedi. WhatsApp sağlayıcı ayarını "Meta" yapın.'
-        : r.ok ? 'WhatsApp gönderildi ✅' : 'Hata: ' + (r.detail || r.error || 'bilinmiyor'),
+        : r.ok ? 'WhatsApp gönderildi ✅' : 'Hata: ' + String(r.detail || r.error || 'bilinmiyor'),
       !r.ok || r.mode === 'log'
     );
     load();
