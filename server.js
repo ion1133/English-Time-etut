@@ -11,7 +11,16 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '200kb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h', index: 'index.html' }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  index: 'index.html',
+  setHeaders(res, filePath) {
+    /* HTML is never cached; CSS and JS are, because their URLs carry a
+     * ?v= version. The old blanket 1-hour cache let a browser pair NEW
+     * html with OLD javascript — the cached script looked for a button
+     * the new page no longer had, threw, and rendered a white screen. */
+    res.setHeader('Cache-Control', filePath.endsWith('.html') ? 'no-cache' : 'public, max-age=86400');
+  },
+}));
 
 const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -212,6 +221,41 @@ app.post('/api/bookings', wrap(async (req, res) => {
 
   res.json({ ok: true });
 }));
+/**
+ * Admin login.
+ *
+ * RESTORED — an earlier edit to the notification block above overran its
+ * boundary and deleted this route. The panel then had no way to issue a
+ * session cookie, so every attempt came back "Hatalı şifre" no matter
+ * what was typed, and resetting the password in the database changed
+ * nothing because nothing was reading it.
+ */
+app.post('/api/admin/login', wrap(async (req, res) => {
+  const st = await db.getSettings();
+  const supplied = String(req.body?.password ?? '');
+  const expected = String(st.admin_password ?? '');
+
+  if (!expected) {
+    return res.status(500).json({ error: 'Yönetici şifresi tanımlı değil.' });
+  }
+
+  // Constant-time compare so the response time does not leak how much of
+  // the password was correct.
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+  if (!ok) return res.status(401).json({ error: 'Hatalı şifre' });
+
+  res.cookie('et_admin', sign({ exp: Date.now() + 12 * 3600 * 1000 }), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.protocol === 'https',
+    maxAge: 12 * 3600 * 1000,
+  });
+  res.json({ ok: true });
+}));
+
 app.post('/api/admin/logout', (req, res) => { res.clearCookie('et_admin'); res.json({ ok: true }); });
 app.get('/api/admin/me', (req, res) => res.json({ admin: !!verify(req.cookies.et_admin) }));
 
