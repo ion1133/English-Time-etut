@@ -254,7 +254,26 @@ app.post('/api/bookings', wrap(async (req, res) => {
     results.teachers.push(await sendSMS(st, st.coordinator_phone, body));
   }
 
-  res.json({ ok: true });
+  /* The confirmation screen reads `summary` and `sms_mode`.
+   *
+   * An earlier rewrite of this block reduced the response to {ok:true},
+   * so the browser threw on `data.summary.map(...)` and showed
+   * "Baglanti hatasi" — even though the booking had saved perfectly.
+   * The failure looked like a network problem and was not one. */
+  res.json({
+    ok: true,
+    sms_mode: results.student?.mode === 'log' ? 'log' : 'sent',
+    summary: chosen.map(s => ({
+      level: s.level,
+      date: s.next_date,
+      day_tr: DAYS_TR[s.day],
+      day_en: DAYS_EN[s.day],
+      start_time: s.start_time,
+      end_time: s.end_time,
+      classroom: s.classroom || (s.day >= 6 ? st.classroom_weekend : st.classroom_weekday) || '',
+      teacher_name: s.teacher_name || '',
+    })),
+  });
 }));
 /**
  * Admin login.
