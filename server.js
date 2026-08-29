@@ -138,7 +138,13 @@ app.post('/api/bookings', wrap(async (req, res) => {
   const chosen = slotIds.map(id => all.find(s => s.id === id)).filter(Boolean);
   if (chosen.length !== slotIds.length) return res.status(400).json({ error: 'Seçilen etüt bulunamadı.' });
   for (const s of chosen) {
-    if (s.cancelled) return res.status(400).json({ error: `${DAYS_TR[s.day]} ${s.start_time} etütü iptal edilmiştir.` });
+    /* Checks BOTH the legacy flag and the per-date cancellation.
+     * Previously only s.cancelled was tested, so a session cancelled for
+     * a specific date still accepted bookings — students were told their
+     * place was reserved for an etut that was not happening. */
+    if (s.cancelled || s.date_cancelled) {
+      return res.status(400).json({ error: `${DAYS_TR[s.day]} ${s.start_time} etütü iptal edilmiştir.` });
+    }
     if (s.full) return res.status(400).json({ error: `${DAYS_TR[s.day]} ${s.start_time} etütü dolu.` });
     if (!levelAllowed(st.level_rule, level, s.level)) return res.status(400).json({ error: `${s.level} etütü seviyenize uygun değil.` });
     const dup = await db.q(`SELECT 1 FROM booking_slots bs JOIN bookings b ON b.id=bs.booking_id
@@ -184,25 +190,54 @@ app.post('/api/bookings', wrap(async (req, res) => {
   });
   results.student = await sendSMS(st, phone, studentBody);
 
-  // --- the teachers ---
-  const byTeacher = new Map();
-  for (const s of chosen) if (s.teacher_phone) {
-    if (!byTeacher.has(s.teacher_phone)) byTeacher.set(s.teacher_phone, { name: s.teacher_name, slots: [] });
-    byTeacher.get(s.teacher_phone).slots.push(s);
-  }
+  /* --- the teachers ---
+   *
+   * ONE SMS per etut session, not per student. Ten students booking the
+   * same Wednesday 17:00 slot means the teacher hears once, on the first
+   * booking; the other nine bookings send nothing.
+   *
+   * The message deliberately carries NO student name. A teacher needs to
+   * know an etut is happening and when — the register is in the admin
+   * panel, and putting names in SMS spreads student data across phones
+   * for no benefit.
+   *
+   * teacher_notifications makes this safe against double-clicks and
+   * simultaneous bookings: the UNIQUE constraint means only the first
+   * INSERT succeeds, so exactly one SMS goes out.
+   */
+  for (const slot of chosen) {
+    if (!slot.teacher_phone) continue;
 
-  for (const [tPhone, t] of byTeacher) {
+    /* Checked with an explicit SELECT rather than relying on
+     * "ON CONFLICT ... RETURNING" returning no rows. That behaviour is
+     * correct in PostgreSQL but not universal, and a notification that
+     * silently fires ten times is exactly the bug being fixed. The
+     * INSERT still carries ON CONFLICT so two simultaneous bookings
+     * cannot both slip through. */
+    const already = await db.q(
+      `SELECT 1 FROM teacher_notifications
+        WHERE slot_id=$1 AND slot_date=$2 AND kind='booking'`,
+      [slot.id, slot.next_date]
+    );
+    if (already.rowCount) continue;
+
+    await db.q(
+      `INSERT INTO teacher_notifications (slot_id, slot_date, kind)
+       VALUES ($1, $2, 'booking')
+       ON CONFLICT (slot_id, slot_date, kind) DO NOTHING`,
+      [slot.id, slot.next_date]
+    );
+
     const body = fill(st.sms_teacher_template || '', {
-      HOCA_ADI: t.name || 'Hocam',
-      AD_SOYAD: fullName,
-      TELEFON: phone,
-      SEVIYE: level,
-      KONU: topic || '-',
-      ETUTLER: t.slots.map(line).join(' | '),
-      SINIF: rooms,
+      HOCA_ADI: slot.teacher_name || 'Hocam',
+      TARIH: fmtTR(slot.next_date),
+      GUN: DAYS_TR[slot.day],
+      SAAT: `${slot.start_time}-${slot.end_time}`,
+      SEVIYE: slot.level,
+      SINIF: slot.classroom || (slot.day >= 6 ? st.classroom_weekend : st.classroom_weekday) || '-',
       SUBE: st.branch_name || 'Kizilay',
     });
-    results.teachers.push(await sendSMS(st, tPhone, body));
+    results.teachers.push(await sendSMS(st, slot.teacher_phone, body));
   }
 
   // --- the coordinator, if one is set ---
@@ -341,6 +376,17 @@ admin.post('/slots/:id/cancel', wrap(async (req, res) => {
 
   if (!cancelling) {
     await db.q('DELETE FROM slot_cancellations WHERE slot_id=$1 AND slot_date=$2', [slotId, date]);
+
+    /* Also clear the LEGACY flag on the recurring slot.
+     *
+     * Before per-date cancellation existed, cancelling set a boolean on
+     * the weekly slot itself. Nothing cleared it afterwards, so any slot
+     * cancelled under the old system stayed cancelled for ever: the
+     * admin panel reported "restored", the student page still showed it
+     * struck through, and every booking was rejected with "etut iptal
+     * edilmistir". */
+    await db.q("UPDATE slots SET cancelled=false, cancel_note='' WHERE id=$1", [slotId]);
+
     return res.json({ ok: true, restored: true });
   }
 

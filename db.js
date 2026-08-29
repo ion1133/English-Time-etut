@@ -58,8 +58,10 @@ const DEFAULT_SETTINGS = {
   sms_student_template:
     'Sayin {AD_SOYAD}, etut kaydiniz olusturuldu: {ETUTLER}. Sinif: {SINIF}. English Time {SUBE}',
 
+  /* No student name: a teacher needs to know an etut is happening and
+   * when. The register is in the admin panel. */
   sms_teacher_template:
-    '{HOCA_ADI}, yeni etut kaydi: {AD_SOYAD} ({TELEFON}) {SEVIYE}. {ETUTLER}. Konu: {KONU}',
+    '{HOCA_ADI}, {TARIH} {GUN} {SAAT} {SEVIYE} etudunuz icin kayit alindi. Sinif: {SINIF}. English Time {SUBE}',
 
   sms_coordinator_template:
     'Yeni etut kaydi: {AD_SOYAD} ({TELEFON}) {SEVIYE}. {ETUTLER}',
@@ -118,6 +120,18 @@ async function init() {
       note TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (slot_id, slot_date)
+    );
+
+    /* One row per teacher notification, so a teacher hears about an etut
+     * ONCE however many students book it. Ten students booking the same
+     * Wednesday session used to mean ten identical SMS. */
+    CREATE TABLE IF NOT EXISTS teacher_notifications (
+      id SERIAL PRIMARY KEY,
+      slot_id INT REFERENCES slots(id) ON DELETE CASCADE,
+      slot_date DATE NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'booking',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (slot_id, slot_date, kind)
     );
 
     CREATE TABLE IF NOT EXISTS messages (
