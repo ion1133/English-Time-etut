@@ -45,7 +45,7 @@
     const today = new Date().toISOString().slice(0, 10);
     const upcoming = D.bookings.flatMap(b => b.slots.map(s => ({ ...s, name: b.first_name + ' ' + b.last_name, lvl: b.level }))).filter(s => s.date >= today);
     const week = upcoming.filter(s => s.date <= new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10));
-    const cancelled = D.slots.filter(s => s.cancelled).length;
+    const cancelled = D.slots.filter(s => s.cancelled).length; // now includes per-date cancellations
     $('#stats').innerHTML = [
       [D.total_bookings, 'Toplam kayıt'], [week.length, 'Bu hafta etüt katılımı'], [D.slots.length, 'Programdaki etüt'],
       [cancelled, 'İptal edilmiş etüt'], [D.teachers.length, 'Öğretmen'],
@@ -68,7 +68,13 @@
       for (const s of D.slots.filter(x => x.day === d)) {
         const b = document.createElement('button'); b.type = 'button';
         b.className = 'tile' + (s.cancelled ? ' cancel' : '');
-        b.innerHTML = `<span class="edit">${s.cancelled ? 'İPTAL' : '✎ ' + s.booked}</span><span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.level)}</span><span class="meta">${esc(s.teacher_name || '— öğretmen yok')}</span>`;
+        // A cancellation applies to ONE date, so the tile says which —
+        // "İPTAL" alone left a coordinator unsure whether the whole
+        // weekly slot was gone.
+        const cancelTag = s.date_cancelled
+          ? `İPTAL ${fmtDate(s.next_date)}`
+          : s.legacy_cancelled ? 'KAPALI' : null;
+        b.innerHTML = `<span class="edit">${cancelTag || '✎ ' + s.booked}</span><span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.level)}</span><span class="meta">${esc(s.teacher_name || '— öğretmen yok')}</span>`;
         b.onclick = () => openSlot(s); col.appendChild(b);
       }
       el.appendChild(col);

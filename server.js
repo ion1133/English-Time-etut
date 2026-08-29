@@ -328,7 +328,20 @@ admin.get('/overview', wrap(async (req, res) => {
     GROUP BY b.id ORDER BY b.created_at DESC LIMIT 300`);
   const { rows: messages } = await db.q('SELECT * FROM messages ORDER BY created_at DESC LIMIT 100');
   const { rows: [{ n: total }] } = await db.q('SELECT COUNT(*)::int AS n FROM bookings');
-  res.json({ settings: st, slots, teachers, bookings, messages, total_bookings: total, levels: LEVELS, site_url: `${req.protocol}://${req.get('host')}` });
+  /* The admin panel showed only the legacy `cancelled` column, so a
+   * cancellation made for a specific date was invisible here — it
+   * appeared on the student page but not in the panel that created it.
+   * Both flags are merged, and the raw ones kept so the panel can tell
+   * a one-off cancellation from a permanently disabled slot. */
+  const slotsForAdmin = slots.map(s => ({
+    ...s,
+    cancelled: s.cancelled || s.date_cancelled,
+    cancel_note: s.date_cancel_note || s.cancel_note || '',
+    date_cancelled: !!s.date_cancelled,
+    legacy_cancelled: !!s.cancelled,
+  }));
+
+  res.json({ settings: st, slots: slotsForAdmin, teachers, bookings, messages, total_bookings: total, levels: LEVELS, site_url: `${req.protocol}://${req.get('host')}` });
 }));
 
 admin.put('/settings', wrap(async (req, res) => {
@@ -364,8 +377,45 @@ admin.post('/slots', wrap(async (req, res) => {
   res.json(s);
 }));
 admin.put('/slots/:id', wrap(async (req, res) => {
-  const { rows: [s] } = await db.q(`UPDATE slots SET day=$1,start_time=$2,end_time=$3,level=$4,teacher_id=$5,classroom=$6,capacity=$7
-    WHERE id=$8 RETURNING *`, [...slotFields(req.body), req.params.id]);
+  /**
+   * Merges with the existing row instead of overwriting every column.
+   *
+   * The previous version fed every field straight into the UPDATE, so a
+   * request that omitted one wrote rubbish: `Number(undefined)` became
+   * NaN for `day` and `String(undefined)` became the literal text
+   * "undefined" for the times. PostgreSQL rejects NaN for an integer, so
+   * the admin saw a 500; had the column been text, the slot would have
+   * been silently corrupted instead.
+   */
+  const { rows: [current] } = await db.q('SELECT * FROM slots WHERE id=$1', [req.params.id]);
+  if (!current) return res.status(404).json({ error: 'Etüt bulunamadı.' });
+
+  const b = req.body || {};
+  const merged = {
+    day: b.day === undefined ? current.day : Number(b.day),
+    start_time: b.start_time === undefined ? current.start_time : String(b.start_time),
+    end_time: b.end_time === undefined ? current.end_time : String(b.end_time),
+    level: b.level === undefined ? current.level : String(b.level).toUpperCase().trim(),
+    teacher_id: b.teacher_id === undefined ? current.teacher_id : (b.teacher_id ? Number(b.teacher_id) : null),
+    classroom: b.classroom === undefined ? current.classroom : String(b.classroom).trim(),
+    capacity: b.capacity === undefined ? current.capacity : Number(b.capacity),
+  };
+
+  if (!Number.isInteger(merged.day) || merged.day < 1 || merged.day > 7) {
+    return res.status(400).json({ error: 'Geçersiz gün.' });
+  }
+  if (!Number.isFinite(merged.capacity) || merged.capacity < 0) {
+    return res.status(400).json({ error: 'Geçersiz kontenjan.' });
+  }
+  if (!LEVELS.includes(merged.level)) {
+    return res.status(400).json({ error: 'Geçersiz seviye.' });
+  }
+
+  const { rows: [s] } = await db.q(
+    `UPDATE slots SET day=$1,start_time=$2,end_time=$3,level=$4,teacher_id=$5,classroom=$6,capacity=$7
+     WHERE id=$8 RETURNING *`,
+    [merged.day, merged.start_time, merged.end_time, merged.level,
+     merged.teacher_id, merged.classroom, merged.capacity, req.params.id]);
   res.json(s);
 }));
 admin.post('/slots/:id/cancel', wrap(async (req, res) => {
