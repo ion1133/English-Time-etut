@@ -16,7 +16,18 @@
  */
 const db = require('./db');
 
-/** Turkish mobile numbers, normalised to 90XXXXXXXXXX. */
+/**
+ * VatanSMS wants a bare 10-digit mobile number: 5XXXXXXXXX.
+ * No country code, no leading zero.
+ */
+function localTR(input) {
+  let n = String(input || '').replace(/\D/g, '');
+  if (n.startsWith('90')) n = n.slice(2);
+  if (n.startsWith('0')) n = n.slice(1);
+  return n;
+}
+
+/** Turkish mobile numbers, normalised to 90XXXXXXXXXX (Netgsm format). */
 function normalizeTR(input) {
   let n = String(input || '').replace(/\D/g, '');
   if (n.startsWith('00')) n = n.slice(2);
@@ -74,17 +85,21 @@ async function sendSMS(settings, to, rawBody) {
     return { ok: false, error: 'invalid number' };
   }
 
-  const ready =
-    settings.sms_provider === 'netgsm' &&
-    settings.netgsm_usercode &&
-    settings.netgsm_password &&
-    settings.netgsm_header;
+  const provider = settings.sms_provider;
 
-  if (!ready) {
+  const netgsmReady = provider === 'netgsm' &&
+    settings.netgsm_usercode && settings.netgsm_password && settings.netgsm_header;
+
+  const vatanReady = provider === 'vatansms' &&
+    settings.vatan_api_id && settings.vatan_api_key && settings.vatan_sender;
+
+  if (!netgsmReady && !vatanReady) {
     await log(recipient, body, 'logged',
       `Test modu — gonderilmedi (${smsParts(body)} SMS olacakti)`);
     return { ok: true, mode: 'log', parts: smsParts(body) };
   }
+
+  if (vatanReady) return sendViaVatan(settings, recipient, body);
 
   try {
     // Netgsm's REST endpoint. Form-encoded, and it answers with a plain
@@ -134,4 +149,53 @@ function netgsmError(code, raw) {
   return errors[code] ? `${code}: ${errors[code]}` : `Netgsm yaniti: ${raw}`;
 }
 
-module.exports = { sendSMS, normalizeTR, toGsm, smsParts };
+/**
+ * VatanSMS — a plain JSON REST call.
+ *
+ * Chosen as the easier alternative to Netgsm, whose signup requires
+ * uploading documents, an e-Devlet approval AND a wet-signed form sent
+ * by cargo. VatanSMS activates the same day from a web form.
+ *
+ * The sender header still needs BTK approval — that is regulation, not a
+ * provider choice, and no Turkish provider can waive it.
+ */
+async function sendViaVatan(settings, recipient90, body) {
+  const phone = localTR(recipient90);
+
+  try {
+    const res = await fetch('https://api.vatansms.net/api/v1/1toN', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_id: settings.vatan_api_id,
+        api_key: settings.vatan_api_key,
+        sender: settings.vatan_sender,
+        // 'normal' keeps the 160-character GSM alphabet. Messages are
+        // already stripped of Turkish characters, so 'turkce' would
+        // halve the limit for no benefit.
+        message_type: 'normal',
+        // 'bilgi' marks these as informational rather than marketing.
+        // A booking confirmation is not a commercial message, so it does
+        // not need IYS consent — sending it as 'ticari' would wrongly
+        // require one and could get the message blocked.
+        message_content_type: 'bilgi',
+        message: body,
+        phones: [phone],
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    const ok = res.ok && (data.status === true || data.status === 'success' || !!data.report_id);
+    const detail = ok
+      ? `${smsParts(body)} SMS · rapor: ${data.report_id ?? '-'}`
+      : (data.message || data.error || `HTTP ${res.status}`);
+
+    await log(recipient90, body, ok ? 'sent' : 'failed', detail);
+    return { ok, mode: 'vatansms', detail, parts: smsParts(body) };
+  } catch (e) {
+    await log(recipient90, body, 'failed', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+module.exports = { sendSMS, normalizeTR, localTR, toGsm, smsParts };

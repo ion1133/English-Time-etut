@@ -123,8 +123,15 @@
           <h3 style="margin-bottom:6px">SMS bağlantısı (Netgsm)</h3>
           <div class="help">Netgsm bilgileri girilene kadar sistem <b>test modunda</b> çalışır: SMS gönderilmez, "Mesajlar" sekmesinde görünür. Tüm mesajlar Türkçe karakter kullanılmadan gönderilir — bir SMS 160 karakter, Türkçe karakterle 70 karaktere düşer.</div>
           <div class="grid">
-            <label class="f">SMS sağlayıcı<select class="input" data-s="sms_provider"><option value="log">Test modu (gönderme)</option><option value="netgsm">Netgsm</option></select></label>
+            <label class="f">SMS sağlayıcı<select class="input" data-s="sms_provider">
+              <option value="">Test modu (gönderme)</option>
+              <option value="vatansms">VatanSMS (önerilen — aynı gün aktivasyon)</option>
+              <option value="netgsm">Netgsm</option>
+            </select></label>
             <label class="f">Netgsm başlık (gönderici adı)<input class="input" data-s="netgsm_header" placeholder="ENGLISHTIME"></label>
+            <label class="f">VatanSMS API ID <small>Hesabım → API Bilgilerimi Görüntüle</small><input class="input" data-s="vatan_api_id"></label>
+            <label class="f">VatanSMS API Key<input class="input" type="password" data-s="vatan_api_key" autocomplete="off" data-lpignore="true"></label>
+            <label class="f">VatanSMS gönderici adı (başlık)<input class="input" data-s="vatan_sender" placeholder="ENGLISHTIME"></label>
             <label class="f">Netgsm kullanıcı kodu<input class="input" data-s="netgsm_usercode"></label>
             <label class="f">Netgsm şifre<input class="input" type="password" data-s="netgsm_password" autocomplete="off" data-lpignore="true" spellcheck="false"></label>
           </div>

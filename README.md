@@ -18,7 +18,25 @@ varsa limit **70 karaktere** düşer — yani aynı mesaj 3 SMS olarak faturalan
 Bu yüzden tüm şablonlar Türkçe karaktersiz yazılmıştır ("etudunuz"). Sunucu
 şablona yazılan Türkçe karakterleri de otomatik olarak sadeleştirir.
 
-## Netgsm kurulumu
+## SMS sağlayıcı: VatanSMS (önerilen)
+
+Netgsm'in üyelik süreci belge yükleme, e-Devlet onayı **ve ıslak imzalı
+formun kargoyla gönderilmesini** istiyor. VatanSMS aynı işi web
+formundan, aynı gün içinde yapıyor.
+
+1. vatansms.com → e-posta ve telefon ile üye olun.
+   Taahhüt yok, kredi kartı istenmiyor; kullanıcı adı ve şifre SMS ile gelir.
+2. Kontör satın alın.
+3. **Gönderici adı (başlık) başvurusu** yapın — örn. ENGLISHTIME.
+   Bu adım BTK zorunluluğudur ve HER sağlayıcıda vardır; belge istenir.
+4. Hesabım → API Bilgilerimi Görüntüle → **api_id** ve **api_key**
+5. Yönetim panelinde: SMS sağlayıcı → VatanSMS, api_id, api_key ve
+   başlığı girin.
+6. "Öğrenci SMS testi" ile kendi numaranıza deneme gönderin.
+
+Başlık onaylanana kadar sistem test modunda kalır.
+
+## Netgsm kurulumu (alternatif)
 
 1. netgsm.com.tr üzerinden hesap açın
 2. Kontör yükleyin (SMS ön ödemelidir)

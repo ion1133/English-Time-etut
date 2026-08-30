@@ -72,6 +72,12 @@ const DEFAULT_SETTINGS = {
   sms_cancel_teacher_template:
     '{HOCA_ADI}, {TARIH} {GUN} {SAAT} etudu iptal edildi. {SAYI} ogrenciye bilgi verildi.',
 
+  /* VatanSMS is the recommended provider: same-day activation, no
+   * wet-signed form and no cargo, unlike Netgsm. */
+  vatan_api_id: '',
+  vatan_api_key: '',
+  vatan_sender: '',
+
   branch_name: 'Kizilay',
 };
 

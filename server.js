@@ -347,6 +347,7 @@ admin.get('/overview', wrap(async (req, res) => {
 admin.put('/settings', wrap(async (req, res) => {
   const allowed = ['coordinator_name', 'coordinator_phone', 'classroom_weekday', 'classroom_weekend', 'level_rule', 'min_days_ahead',
     'sms_provider', 'netgsm_usercode', 'netgsm_password', 'netgsm_header',
+    'vatan_api_id', 'vatan_api_key', 'vatan_sender',
     'sms_student_template', 'sms_teacher_template', 'sms_coordinator_template',
     'sms_cancel_template', 'sms_cancel_teacher_template',
     'branch_name', 'admin_password'];
