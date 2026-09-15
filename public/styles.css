@@ -40,3 +40,155 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;z-index:-2;bac
   .row-between>.inline>*{min-width:0}.table-search{width:100%}
   .segmented{max-width:100%;overflow-x:auto}.segmented button{white-space:nowrap}
 }
+
+
+/* Student/teacher readability refinements - design only */
+body.public-booking,
+body.student-panel,
+body.teacher-panel{
+  font-family:"Segoe UI Variable Text","Aptos","Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-optical-sizing:auto;
+  text-rendering:optimizeLegibility;
+  -webkit-font-smoothing:antialiased;
+}
+body.public-booking .brand,
+body.public-booking .hero h1,
+body.public-booking .dayhead,
+body.public-booking .tile .lvl,
+body.student-panel .brand,
+body.student-panel .panel-title,
+body.student-panel .panel-hero h1,
+body.student-panel .dayhead,
+body.student-panel .tile .lvl,
+body.teacher-panel .brand,
+body.teacher-panel .panel-title,
+body.teacher-panel .panel-hero h1,
+body.teacher-panel .dayhead,
+body.teacher-panel .tile .lvl,
+body.teacher-panel .modal h2,
+body.teacher-panel .modal h3{
+  font-family:"Segoe UI Variable Display","Aptos Display","Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-weight:800;
+  letter-spacing:-.025em;
+}
+
+/* Clearer schedule dates and times without changing schedule behaviour. */
+body.public-booking #sched .dayhead,
+body.student-panel #sSchedule .dayhead,
+body.teacher-panel #schedule .dayhead{
+  font-weight:850;
+  letter-spacing:-.015em;
+}
+body.public-booking #sched .dayhead small,
+body.student-panel #sSchedule .dayhead small,
+body.teacher-panel #schedule .dayhead small{
+  font-size:.79rem;
+  font-weight:850;
+  opacity:.88;
+  letter-spacing:.015em;
+  font-variant-numeric:tabular-nums;
+}
+body.public-booking #sched .tile .time,
+body.student-panel #sSchedule .tile .time,
+body.teacher-panel #schedule .tile .time{
+  font-size:.84rem;
+  font-weight:850;
+  line-height:1.2;
+  letter-spacing:-.01em;
+  color:color-mix(in srgb,var(--text) 82%,var(--muted));
+  font-variant-numeric:tabular-nums;
+}
+body.public-booking #sched .tile .lvl,
+body.student-panel #sSchedule .tile .lvl,
+body.teacher-panel #schedule .tile .lvl{
+  font-size:1.3rem;
+  font-weight:850;
+  line-height:1.08;
+}
+body.public-booking #sched .tile .meta,
+body.student-panel #sSchedule .tile .meta,
+body.teacher-panel #schedule .tile .meta{
+  font-size:.75rem;
+  font-weight:700;
+  line-height:1.3;
+  color:color-mix(in srgb,var(--text) 68%,var(--muted));
+}
+body.public-booking #sched .capacity-mini,
+body.student-panel #sSchedule .capacity-mini,
+body.teacher-panel #schedule .capacity-mini{
+  font-size:.69rem;
+  font-weight:800;
+  line-height:1.25;
+}
+body.student-panel .week-label,
+body.teacher-panel .week-label{
+  font-family:"Segoe UI Variable Text","Aptos","Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:.9rem;
+  font-weight:850;
+  letter-spacing:-.01em;
+  color:color-mix(in srgb,var(--text) 80%,var(--muted));
+  font-variant-numeric:tabular-nums;
+}
+
+/* A selected student etüt is unmistakably yellow. */
+body.public-booking #sched .tile.on,
+body.student-panel #sSchedule .tile.on{
+  background:var(--yellow)!important;
+  border-color:var(--yellow2)!important;
+  color:#111!important;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--yellow) 28%,transparent),0 10px 24px rgba(0,0,0,.12);
+}
+body.public-booking #sched .tile.on .time,
+body.public-booking #sched .tile.on .meta,
+body.public-booking #sched .tile.on .capacity-mini,
+body.student-panel #sSchedule .tile.on .time,
+body.student-panel #sSchedule .tile.on .meta,
+body.student-panel #sSchedule .tile.on .capacity-mini{
+  color:#2b2908!important;
+  font-weight:850;
+}
+
+/* Student booking cards: make the actual date/time the visual priority. */
+body.student-panel .date-chip b{
+  font-size:.98rem;
+  font-weight:900;
+  letter-spacing:-.015em;
+  font-variant-numeric:tabular-nums;
+}
+body.student-panel .date-chip span{
+  font-size:.69rem;
+  font-weight:850;
+}
+body.student-panel .booking-main h3{
+  margin:4px 0 3px;
+  font-size:1.08rem;
+  font-weight:900;
+  letter-spacing:-.015em;
+  font-variant-numeric:tabular-nums;
+}
+body.student-panel .booking-main p{
+  font-size:.8rem;
+  font-weight:650;
+  line-height:1.35;
+}
+
+/* Teacher cards/modal: stronger hierarchy for date, hour and slot details. */
+body.teacher-panel #slotDate{
+  font-size:.78rem;
+  font-weight:850;
+  letter-spacing:.08em;
+}
+body.teacher-panel #slotTitle{
+  font-size:1.55rem;
+  font-weight:900;
+  letter-spacing:-.025em;
+  font-variant-numeric:tabular-nums;
+}
+body.teacher-panel .mini-stat span{
+  font-weight:800;
+}
+body.teacher-panel .mini-stat b{
+  font-size:.86rem;
+  font-weight:850;
+  line-height:1.3;
+}

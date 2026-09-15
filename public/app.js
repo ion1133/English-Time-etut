@@ -108,7 +108,7 @@
   function tile(s){
     const b=document.createElement('button'),ok=slotAllowed(s),id=Number(s.id);b.type='button';
     b.className='tile'+(s.cancelled?' cancel':!ok?' lock':s.full?' full':'')+(selected.has(id)?' on':'');b.setAttribute('aria-pressed',selected.has(id));
-    const place=[s.teacher_name,s.classroom].filter(Boolean).join(' · ');
+    const place=s.classroom||'';
     b.innerHTML=`<span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.level)}</span><span class="meta">${esc(place)}</span><span class="capacity-mini">${esc(t('capacity')(s.booked||0,s.capacity||0))}</span>`;
     b.onclick=()=>{if(s.cancelled)return modal(t('cancelT'),esc(s.cancel_note||t('cancelB')));if(!ok)return modal(t('lockT'),t('lockB'));if(s.full)return modal(t('fullT'),t('fullB'));selected.has(id)?selected.delete(id):selected.add(id);renderSchedule(false);};
     return b;

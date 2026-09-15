@@ -115,7 +115,7 @@
     const key=`${s.id}|${s.date}`,b=document.createElement('button');b.type='button';
     const cls=s.cancelled?' cancel':s.mine_status==='active'?' mine':s.full?' full':!s.allowed?' lock':s.ended?' lock':'';b.className='tile'+cls+(selected.has(key)?' on':'');
     const cap=s.capacity>0?`${s.booked}/${s.capacity}`:`${s.booked}`;
-    b.innerHTML=`<span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.level)}</span><span class="meta">${esc([s.teacher_name,s.classroom].filter(Boolean).join(' · '))}</span><span class="capacity-mini">${s.mine_status==='active'?'Zaten kayıtlı':s.mine_status==='cancelled_previous'?'Daha önce iptal ettin · tekrar seçilebilir':s.cancelled?'İptal':s.ended?'Tamamlandı':s.full?'Dolu':`Kontenjan ${cap}`}</span>`;
+    b.innerHTML=`<span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.level)}</span><span class="meta">${esc(s.classroom||'')}</span><span class="capacity-mini">${s.mine_status==='active'?'Zaten kayıtlı':s.mine_status==='cancelled_previous'?'Daha önce iptal ettin · tekrar seçilebilir':s.cancelled?'İptal':s.ended?'Tamamlandı':s.full?'Dolu':`Kontenjan ${cap}`}</span>`;
     b.onclick=()=>{if(!s.bookable){toast(s.mine_status==='active'?'Bu etüte zaten kayıtlısın.':s.cancelled?'Bu etüt iptal edildi.':s.full?'Etüt dolu.':!s.allowed?'Bu etüt seviyene uygun değil.':'Bu tarih kayıt için kapalı.',true);return;}selected.has(key)?selected.delete(key):selected.set(key,{slot_id:s.id,date:s.date});renderSchedule();};
     return b;
   }

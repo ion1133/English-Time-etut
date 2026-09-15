@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'..');const read=f=>fs.readFileSync(path.join(root,f),'utf8');
-const server=read('server.js'),db=read('db.js'),css=read('public/styles.css'),index=read('public/index.html'),student=read('public/student.html'),teacherJs=read('public/teacher.js'),appJs=read('public/app.js');
+const server=read('server.js'),db=read('db.js'),css=read('public/styles.css'),index=read('public/index.html'),student=read('public/student.html'),teacherJs=read('public/teacher.js'),studentJs=read('public/student.js'),appJs=read('public/app.js');
 const checks=[];function ok(name,fn){try{fn();checks.push([name,true]);console.log('PASS ',name)}catch(e){checks.push([name,false]);console.error('FAIL ',name,'-',e.message)}}
 ok('unsafe historical Admin password is rejection-only, never a fallback',()=>{assert.match(db,/KNOWN_UNSAFE_ADMIN_PASSWORD/);assert.doesNotMatch(db,/ADMIN_PASSWORD\s*\|\|\s*['\"]EnglishTime2026!/)});
 ok('recurring slot removal is soft archive in production route',()=>{assert.match(server,/UPDATE slots SET active=false,deleted_at=NOW\(\)/);assert.doesNotMatch(server,/admin\.delete\('\/slots\/.*DELETE FROM slots/s)});
@@ -13,7 +13,7 @@ ok('Admin password changes increment admin_session_version',()=>{assert.match(se
 ok('Teacher username changes can invalidate sessions',()=>{assert.match(server,/username\.toLowerCase\(\)[\s\S]*session_version=session_version\+\$8/)});
 ok('mobile public links stay present',()=>{assert.match(index,/Etütlerim/);assert.match(index,/Öğretmen misiniz/);assert.match(css,/critical-links \.toplink\{display:flex!important/)});
 ok('mobile Student New Etüt remains present',()=>{assert.match(student,/\+ Yeni Etüt/);assert.match(student,/critical-links single/)});
-ok('public tile combines Teacher and classroom',()=>{assert.match(appJs,/\[s\.teacher_name,s\.classroom\]\.filter\(Boolean\)\.join\(' · '\)/)});
+ok('student-facing selection tiles hide Teacher names',()=>{assert.match(appJs,/const place=s\.classroom\|\|''/);assert.match(studentJs,/class=\"meta\">\$\{esc\(s\.classroom\|\|''\)\}<\/span>/)});
 ok('frontend polling avoids setInterval overlap pattern',()=>{for(const f of ['public/student.js','public/teacher.js','public/admin.js'])assert.doesNotMatch(read(f),/setInterval\s*\(/)});
 ok('Teacher frontend has no phone field rendering',()=>{assert.doesNotMatch(teacherJs,/student\.phone|s\.phone|phone_number|telefon/i)});
 ok('unknown API paths have JSON 404 before page fallback',()=>{assert.ok(server.indexOf("app.use('/api'")<server.indexOf("app.get('*'"));assert.match(server,/API yolu bulunamadı/)});
