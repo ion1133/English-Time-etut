@@ -192,3 +192,64 @@ body.teacher-panel .mini-stat b{
   font-weight:850;
   line-height:1.3;
 }
+
+/* Teacher/student schedule status language + legend refinements */
+.schedule-key{
+  display:flex;align-items:center;gap:9px 16px;flex-wrap:wrap;
+  margin:10px 0 13px;padding:10px 12px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--surface) 92%,transparent);border-radius:14px;
+  font-size:.72rem;color:var(--muted);box-shadow:var(--soft-shadow)
+}
+.schedule-key>span{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.schedule-key b{font-size:.72rem;font-weight:800;color:color-mix(in srgb,var(--text) 82%,var(--muted));letter-spacing:-.005em}
+.key-swatch{position:relative;display:inline-block;width:18px;height:15px;border-radius:5px;background:var(--tile);border:1px solid var(--tileLine);flex:0 0 auto}
+.key-swatch.assigned{border:2px solid var(--yellow2);box-shadow:0 0 0 1px color-mix(in srgb,var(--yellow) 24%,transparent)}
+.key-swatch.full,.key-swatch.selected{background:var(--yellow);border-color:var(--yellow2)}
+.key-swatch.cancelled{background:var(--surface2);border-color:color-mix(in srgb,var(--red) 45%,var(--line));overflow:hidden}
+.key-swatch.cancelled:after{content:"";position:absolute;inset:-3px;background:linear-gradient(to top right,transparent calc(50% - 1px),var(--red) 50%,transparent calc(50% + 1px))}
+.key-icon{width:21px;height:21px;border-radius:7px;display:inline-grid;place-items:center;flex:0 0 auto;font-style:normal;font-size:.8rem;background:var(--surface2);border:1px solid var(--line)}
+.key-icon.recommended{background:var(--yellow-soft);border-color:color-mix(in srgb,var(--yellow2) 62%,var(--line));color:#8c7000;font-size:.9rem}
+
+/* Teacher semantics: assignment keeps its yellow outline; full slots become solid yellow. */
+body.teacher-panel #schedule .teacher-tile.full-slot{
+  background:var(--yellow)!important;border-color:var(--yellow2)!important;color:#111!important;
+  opacity:1!important;box-shadow:0 8px 20px rgba(0,0,0,.10)
+}
+body.teacher-panel #schedule .teacher-tile.full-slot .time,
+body.teacher-panel #schedule .teacher-tile.full-slot .lvl,
+body.teacher-panel #schedule .teacher-tile.full-slot .meta,
+body.teacher-panel #schedule .teacher-tile.full-slot .capacity-mini{color:#111!important}
+body.teacher-panel #schedule .teacher-tile.full-slot .time,
+body.teacher-panel #schedule .teacher-tile.full-slot .meta,
+body.teacher-panel #schedule .teacher-tile.full-slot .capacity-mini{font-weight:850}
+body.teacher-panel #schedule .teacher-tile.full-slot.cancel{background:var(--yellow)!important;opacity:1!important}
+body.teacher-panel #schedule .teacher-tile.full-slot.own{outline:2px solid var(--yellow2);outline-offset:2px}
+.student-pill{
+  position:absolute;right:7px;top:7px;z-index:2;display:inline-flex;align-items:center;gap:3px;
+  min-height:20px;padding:2px 6px;border-radius:999px;background:color-mix(in srgb,var(--text) 9%,var(--surface));
+  border:1px solid color-mix(in srgb,var(--text) 15%,var(--line));color:var(--text);font-size:.61rem;font-weight:900;
+  font-variant-numeric:tabular-nums
+}
+body.teacher-panel #schedule .teacher-tile.full-slot .student-pill{background:rgba(255,255,255,.38);border-color:rgba(17,17,17,.28);color:#111}
+body.teacher-panel #schedule .teacher-tile.has-students .new-pill{top:32px}
+.cancel-log{margin:2px 0 18px;padding:12px 14px;border-radius:13px;border:1px solid color-mix(in srgb,var(--red) 42%,var(--line));background:color-mix(in srgb,var(--red) 8%,var(--surface));position:relative;overflow:hidden}
+.cancel-log:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--red)}
+.cancel-log-title{display:flex;align-items:center;gap:7px;color:var(--red);font-size:.75rem;text-transform:uppercase;letter-spacing:.06em}
+.cancel-log-title b{font-weight:900}.cancel-log p{margin:7px 0 0;font-size:.82rem;line-height:1.45;font-weight:700;color:var(--text)}
+
+/* Student recommendation marker: visual guidance only; booking rules are unchanged. */
+body.student-panel #sSchedule .tile.recommended:not(.on){
+  border-color:color-mix(in srgb,var(--yellow2) 68%,var(--tileLine));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--yellow) 38%,transparent)
+}
+.recommended-pill{
+  position:absolute;right:7px;top:7px;z-index:2;width:21px;height:21px;border-radius:7px;
+  display:grid;place-items:center;background:var(--yellow);border:1px solid var(--yellow2);color:#111;
+  font-size:.72rem;font-weight:950;box-shadow:0 2px 7px rgba(0,0,0,.10)
+}
+body.student-panel #sSchedule .tile.recommended.on .recommended-pill{right:34px;background:#111;color:var(--yellow);border-color:#111}
+
+@media (max-width:650px){
+  .schedule-key{gap:8px 11px;padding:9px 10px}.schedule-key>span{white-space:normal}.schedule-key b{font-size:.68rem}
+  .topbar .lang button{padding:7px 7px;font-size:.66rem}
+}
