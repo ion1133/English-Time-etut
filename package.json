@@ -1,6 +1,6 @@
 {
   "name": "english-time-etut-system",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "description": "English Time Etut System - synchronized student, teacher and admin panels",
   "main": "server.js",
   "scripts": {

@@ -2,7 +2,12 @@
 
 ## Final validation status
 
-**2.1.3 passed the complete real PostgreSQL integration/concurrency suite: 75/75 tests passed, 0 failed (180.9s).** Syntax checks also passed and the static regression suite is 21/21 PASS. The remaining required verification is the post-deployment browser/mobile smoke test in the real Coolify environment.
+## 2.1.4 deployment lockfile hotfix
+
+Coolify/Railpack deployment exposed an invalid transitive lockfile entry for `require-directory@2.1.2`, which does not exist on the public npm registry. The lockfile is restored to the published `require-directory@2.1.1` tarball and `^2.1.1` dependency selector, matching the original project's working lockfile. No application/runtime behavior changed in this hotfix.
+
+
+**2.1.4 contains the deployment-only lockfile correction described below. The application code remains the 2.1.3 code that passed the complete real PostgreSQL integration/concurrency suite: 75/75 tests passed, 0 failed (180.9s).** Syntax checks also passed and the static regression suite is 21/21 PASS. The remaining required verification is the post-deployment browser/mobile smoke test in the real Coolify environment.
 
 
 This project is one Node.js/Express application backed by one PostgreSQL database. PostgreSQL is the single source of truth for the public booking flow, Student Panel (`/student`), Teacher Panel (`/teacher`) and Admin Panel (`/admin`). SMS, WhatsApp and email are intentionally inactive; notifications are internal panel notifications only.

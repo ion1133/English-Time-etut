@@ -1,4 +1,10 @@
-# TEST REPORT — English Time Etüt 2.1.3
+# TEST REPORT — English Time Etüt 2.1.4
+
+## 2.1.4 Coolify/Railpack dependency-lock correction
+
+The first Coolify deployment attempt did not reach application startup. Railpack failed during `npm ci` because `package-lock.json` incorrectly referenced `require-directory@2.1.2` and its nonexistent npm tarball. The original audited project's lockfile used the published `require-directory@2.1.1`. Version 2.1.4 restores that exact transitive dependency (`2.1.1`, tarball URL, and `^2.1.1` selector). This is a deployment/dependency-lock correction only; no server, database, frontend, transaction, authentication, or scheduling logic changed after the 75/75 PostgreSQL run.
+
+Post-hotfix local verification: JavaScript syntax PASS; static regression 21/21 PASS; lockfile JSON consistency checked. The 75/75 PostgreSQL result remains applicable because application code is unchanged.
 
 ## FINAL EXTERNAL POSTGRESQL VALIDATION — PASS
 
