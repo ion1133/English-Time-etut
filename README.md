@@ -1,129 +1,120 @@
-# English Time Etüt Sistemi
+# English Time Etüt System — production-hardened synchronized panels
 
-Öğrenci etüt kayıt sistemi. **Bildirimler yalnızca SMS ile gönderilir (Netgsm).**
+## Final validation status
 
-## Neden WhatsApp yok?
-
-Meta'nın WhatsApp Cloud API'si, size son 24 saat içinde mesaj yazmamış
-birine serbest metin göndermenize izin vermez. Öğretmenler okula WhatsApp'tan
-yazmadığı için bu kural bildirimleri kullanılamaz hale getirir. Aşmak için
-kayıtlı bir SIM ve Meta tarafından onaylanmış şablonlar gerekir — SMS'in
-anında yaptığı işi günler süren bir kuruluma çevirir.
-
-## SMS karakter kuralı
-
-Bir SMS **160 karakterdir**. Metinde ğ ş ı İ ç ö ü gibi Türkçe karakterler
-varsa limit **70 karaktere** düşer — yani aynı mesaj 3 SMS olarak faturalanır.
-
-Bu yüzden tüm şablonlar Türkçe karaktersiz yazılmıştır ("etudunuz"). Sunucu
-şablona yazılan Türkçe karakterleri de otomatik olarak sadeleştirir.
-
-## SMS sağlayıcı: VatanSMS (önerilen)
-
-Netgsm'in üyelik süreci belge yükleme, e-Devlet onayı **ve ıslak imzalı
-formun kargoyla gönderilmesini** istiyor. VatanSMS aynı işi web
-formundan, aynı gün içinde yapıyor.
-
-1. vatansms.com → e-posta ve telefon ile üye olun.
-   Taahhüt yok, kredi kartı istenmiyor; kullanıcı adı ve şifre SMS ile gelir.
-2. Kontör satın alın.
-3. **Gönderici adı (başlık) başvurusu** yapın — örn. ENGLISHTIME.
-   Bu adım BTK zorunluluğudur ve HER sağlayıcıda vardır; belge istenir.
-4. Hesabım → API Bilgilerimi Görüntüle → **api_id** ve **api_key**
-5. Yönetim panelinde: SMS sağlayıcı → VatanSMS, api_id, api_key ve
-   başlığı girin.
-6. "Öğrenci SMS testi" ile kendi numaranıza deneme gönderin.
-
-Başlık onaylanana kadar sistem test modunda kalır.
-
-## Netgsm kurulumu (alternatif)
-
-1. netgsm.com.tr üzerinden hesap açın
-2. Kontör yükleyin (SMS ön ödemelidir)
-3. **Gönderici adı (başlık)** başvurusu yapın — örn. ENGLISHTIME.
-   BTK onayı gerekir, birkaç iş günü sürer, firma evrakı istenir.
-4. Yönetim panelinde: SMS sağlayıcı → Netgsm, kullanıcı kodu, şifre ve
-   başlık alanlarını doldurun
-5. "Öğrenci SMS testi" ile kendi numaranıza deneme gönderin
-
-Başlık onaylanana kadar sistem test modunda kalır: mesajlar gönderilmez,
-"Mesajlar" sekmesinde görünür.
+**2.1.3 passed the complete real PostgreSQL integration/concurrency suite: 75/75 tests passed, 0 failed (180.9s).** Syntax checks also passed and the static regression suite is 21/21 PASS. The remaining required verification is the post-deployment browser/mobile smoke test in the real Coolify environment.
 
 
-## 1 · Put the code on GitHub (5 min)
+This project is one Node.js/Express application backed by one PostgreSQL database. PostgreSQL is the single source of truth for the public booking flow, Student Panel (`/student`), Teacher Panel (`/teacher`) and Admin Panel (`/admin`). SMS, WhatsApp and email are intentionally inactive; notifications are internal panel notifications only.
 
-1. Go to <https://github.com> → sign up / log in.
-2. Click **New repository** → name it `english-time-etut` → **Create repository**.
-3. On the new repo page click **uploading an existing file**, drag **all the files in this folder** (not the folder itself, the files inside it: `server.js`, `db.js`, `messaging.js`, `package.json`, `render.yaml`, `README.md` and the `public` folder) → **Commit changes**.
+## Normal deployment
 
-## 2 · Create the free database (3 min)
+The intended deployment stays simple:
 
-1. Go to <https://neon.tech> → **Sign up** (with Google/GitHub is easiest).
-2. **Create project** → name `english-time-etut` → region **Europe (Frankfurt)** → Create.
-3. On the dashboard click **Connect** → copy the **connection string** (starts with `postgresql://…`). Keep it, you need it in the next step.
+`GitHub → Coolify/Railpack → Node.js → existing PostgreSQL`
 
-## 3 · Put the website online (5 min)
+Required/expected environment variables:
 
-1. Go to <https://render.com> → **Sign up** with GitHub.
-2. **New +** → **Web Service** → connect your `english-time-etut` repository.
-3. Settings: Name `english-time-etut` · Region **Frankfurt** · Instance type **Free** · Build command `npm install` · Start command `npm start`.
-4. Scroll to **Environment Variables** → **Add**:
-   - `DATABASE_URL` = the Neon connection string you copied
-   - `ADMIN_PASSWORD` = the first admin password you want (you can change it later in the panel)
-5. Click **Deploy Web Service**. After 2–3 minutes you get a link like `https://english-time-etut.onrender.com` — that is your site.
+- `DATABASE_URL` — PostgreSQL connection string.
+- `NODE_ENV=production`.
+- `PORT=3000` (or another Coolify-provided port).
+- `SESSION_SECRET` — long stable random secret. Production startup refuses to run without it. Changing it invalidates all signed browser sessions.
+- `ADMIN_PASSWORD` — required only when a database has no established Admin password hash yet (fresh install or legacy DB that still needs bootstrap migration). It must be at least 8 characters and cannot be the historical unsafe default. Once a secure hash exists, startup does not overwrite it from the environment.
 
-> Free tip: Render's free plan "sleeps" after 15 minutes without visitors; the first student to scan after a quiet period waits ~30 seconds while it wakes up. To keep it awake for free, go to <https://uptimerobot.com>, add a monitor for your site URL, every 5 minutes.
+No manual SQL is required. Versioned migrations run automatically during startup before `/readyz` reports success. Startup migration/seed work is serialized with a PostgreSQL advisory lock so multiple replicas cannot race the migration/initial-seed decision.
 
-## 4 · First setup in the admin panel (5 min)
+## Admin bootstrap and sessions
 
-1. Open `https://YOUR-SITE.onrender.com/admin` → log in with the password from step 3.
-2. **Ayarlar** → enter the coordinator's WhatsApp number, check the classrooms, save.
-3. **Öğretmenler** → add each teacher with their WhatsApp number.
-4. **Program** → click each etüt box → choose its teacher → Kaydet. (The schedule from your printed timetable is already loaded.)
-5. **Genel bakış** → **QR'ı indir** → print it → pin it on the notice board. Done.
+A fresh/legacy Admin bootstrap password is immediately hashed with Node `crypto.scrypt` during database initialization. Plaintext `admin_password` in `settings` is cleared during the same initialization. The historical predictable password is explicitly rejected and is never used as a fallback.
 
-## 5 · Turn on real SMS and WhatsApp (when you are ready)
+Admin sessions carry `admin_session_version`. Changing the Admin password increments that version, invalidating prior Admin cookies while issuing the current browser a refreshed session.
 
-Until you do this, the system runs in **test mode**: everything works, but messages are only shown in the **Mesajlar** tab instead of being sent.
+## Teacher accounts
 
-**SMS (Netgsm)** — <https://www.netgsm.com.tr>
-1. Open an account, buy an SMS package, and request a sender name (e.g. `ENGLISHTIME`) — Netgsm asks for company documents, approval takes ~1–2 days.
-2. In the admin panel → **Ayarlar** → SMS sağlayıcı: *Netgsm* → enter usercode (your Netgsm phone number), password, and the approved header → **Ayarları kaydet** → send a test with "SMS testi".
+Admin chooses a unique username. The system generates a strong temporary password on account creation/reset and shows it once; PostgreSQL stores only `scrypt` hash + salt. Teacher sessions last 12 hours.
 
-Any other Turkish provider works too (İleti Merkezi, Verimor…) — tell me which and I'll swap the 20 lines in `messaging.js`.
+Five failed Teacher login attempts temporarily lock the username for 15 minutes. Admin can unlock it, reset the password, force logout, disable/archive the account, or change the username. Password reset, username changes and relevant account-state changes invalidate previous Teacher sessions.
 
-**WhatsApp (Meta Cloud API)** — free for the first 1000 conversations/month
-1. <https://business.facebook.com> → create a business portfolio → <https://developers.facebook.com> → **Create App** → type *Business* → add **WhatsApp** product.
-2. In WhatsApp → API Setup: add the school's phone number, copy **Phone number ID** and generate a **permanent access token** (System user → Generate token, permission `whatsapp_business_messaging`).
-3. Recipients (teachers + coordinator) must reply once to the business number, or you must use an approved message template; easiest is to have them send "Merhaba" to the school's WhatsApp number once.
-4. Admin panel → **Ayarlar** → WhatsApp sağlayıcı: *Meta* → paste Phone Number ID + token → save → "WhatsApp testi".
+Teachers are read-only. They can see all etüts, with their own assignments highlighted, plus Student first name, surname, CEFR level and topic/request. Teacher APIs/UI do not expose Student phone numbers.
 
-## Everyday use for the coordinator
+## Student access
 
-| Want to… | Where |
-|---|---|
-| Cancel an etüt (students see a red line and a "cancelled by the Educational Coordinator" message) | Program → click box → tick *iptal edildi* |
-| Change teacher / time / level / day / classroom / capacity | Program → click box |
-| Add or remove an etüt | Program → *Yeni etüt ekle* / *Sil* |
-| Change teachers' phone numbers | Öğretmenler |
-| See who registered, delete a registration | Kayıtlar |
-| Download Excel | Genel bakış or Kayıtlar → *Excel indir* |
-| Check SMS/WhatsApp sent | Mesajlar |
-| Change password, level rule, earliest-booking rule, SMS text | Ayarlar |
+There is intentionally no Student password in this release. Student identity is normalized:
 
-## Rules built in
+`phone + first name + surname`
 
-- Names: letters only. Phone: must be `05XX XXX XX XX`.
-- Students can only pick slots for **their level or one level above** (B1 → B1, B2). Changeable in Ayarlar.
-- Earliest bookable etüt is **tomorrow** (changeable). Each chosen day is booked for its next date.
-- Unlimited number of slots per registration; the same phone can't book the same slot twice.
-- Cancelled and full slots cannot be booked, and the server double-checks everything.
+The saved CEFR level is additionally checked at login. This allows siblings using the same family phone number to remain separate profiles when their names differ. A successful booking/login creates a 30-day signed Student session.
 
-## Running on your own computer (optional, for testing)
+Students can book eligible sessions, view history, cancel their own future/not-ended registration, edit allowed name fields and request a phone-number change. CEFR level remains Admin-controlled. Approved phone changes increment `session_version`, so old Student sessions and the old identity stop working.
 
+## Scheduling/data-integrity behavior
+
+- Booking and schedule mutations share PostgreSQL transaction/advisory-lock rules.
+- Multi-slot occurrence locks are sorted deterministically by date + slot ID to avoid A→B/B→A deadlocks.
+- Capacity is checked under the occurrence lock; simultaneous users cannot legitimately take the same final seat.
+- Authenticated Student booking locks and uses the current Student row by ID instead of recreating identity from stale profile fields.
+- Student overlap, Teacher overlap and classroom overlap are rejected server-side.
+- Already-started sessions and dates beyond the configured `max_weeks_ahead` horizon are rejected server-side.
+- One-date cancellation/restoration preserves the recurring template and booking rows.
+- Recurring slot removal is a soft archive (`active=false`, `deleted_at`); historical joins are retained.
+- Future materialized occurrence edits update active and cancelled booking snapshots coherently; past history remains frozen.
+- Capacity reduction does not silently eject already-booked Students.
+- Level changes with active future bookings require explicit Admin confirmation.
+- Deactivating/archiving a Teacher removes that Teacher from future assignments/snapshots while preserving historical references.
+
+## Synchronization
+
+Student, Teacher and Admin panels use small revision/sync-state checks (`schedule`, `booking`, `account`, `notification`) rather than repeatedly downloading the entire dashboard. Frontend polling uses non-overlapping recursive scheduling/in-flight protection. High-priority cancellation/schedule/account notifications are surfaced while a panel is already open.
+
+## System Logs / Error Center
+
+Every HTTP request gets an `X-Request-ID`. Unexpected server failures are correlated to a structured PostgreSQL `system_logs` row where the database is available. Public/Student/Teacher 500 responses receive a safe error + request ID, never stack traces. Admin can filter/search logs, inspect sanitized stack/metadata, resolve/reopen entries and export CSV.
+
+Sensitive keys and common secret-bearing text are redacted. Passwords, password hashes, cookies, authorization values, session secrets, database URLs/credentials and API keys must not be intentionally logged. Audit history (`audit_logs`) remains separate from technical system errors (`system_logs`).
+
+## Health/readiness
+
+- `/healthz` — process liveness. It can be HTTP 200 while PostgreSQL is temporarily unavailable.
+- `/readyz` — application/database readiness. It is HTTP 200 only when PostgreSQL is reachable and the application can operate; use this for deployment readiness.
+
+## Tests
+
+Syntax/static checks (no database needed):
+
+```bash
+npm ci
+npm run test:syntax
+npm run test:static
 ```
-npm install
-set DATABASE_URL=postgresql://...      (Windows)   |  export DATABASE_URL=postgresql://...  (Mac)
-npm start
+
+The integration suite is intentionally destructive and must use **only a disposable PostgreSQL database**:
+
+```bash
+# PowerShell example
+$env:ETUT_TEST_DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE"
+$env:ETUT_TEST_DESTRUCTIVE="YES"
+npm run test:integration
 ```
-then open <http://localhost:3000>.
+
+On Windows, `RUN_TESTS_WINDOWS.ps1` prompts for the disposable test URL and runs `npm ci`, syntax checks and the real PostgreSQL integration/concurrency suite. Never point it at production: it drops and recreates the test database's `public` schema.
+
+See `TEST_REPORT.md`, `DATABASE_MIGRATIONS.md`, `LOGGING.md` and `DEPLOY_CHECKLIST.md` for the handoff details.
+
+
+## 2.1.1 readiness correction
+
+A disposable PostgreSQL test run found that `/readyz` could return 200 before startup migrations completed. Version 2.1.1 gates readiness on completed `db.init()` and adds a regression check. Re-run `RUN_TESTS_WINDOWS.ps1` against the disposable database before production deployment.
+
+
+## 2.1.2 test-suite timing correction
+
+A real PostgreSQL rerun passed 33 checks and exposed a midnight-sensitive test fixture: a booking created for “tomorrow 08:00” can become an already-ended “today 08:00” occurrence if the suite crosses Europe/Istanbul midnight. Version 2.1.2 moves main integration fixtures two calendar days ahead and improves failure diagnostics. This changes test timing only; production booking/cancellation policy is unchanged.
+
+
+## 2.1.3 real-PostgreSQL correction
+
+The 2.1.2 disposable PostgreSQL run completed **75 integration tests: 68 passed / 7 failed**. Five schedule-related failures shared one cross-platform root cause: PostgreSQL `DATE` values can be returned as local-midnight JavaScript `Date` objects on Windows; converting those with `toISOString()` shifted Europe/Istanbul calendar dates back one day, so Admin edits/reassignments/capacity changes targeted the wrong materialized occurrence. Version 2.1.3 preserves local calendar components for PostgreSQL DATE values.
+
+The same run also exposed two independent defects: Admin system-log pagination forced a minimum page size of 10 even when `limit=1`, and Admin overview compared the TEXT `booking_slots.end_time` column directly with a PostgreSQL `time`, causing a 500 after an Admin password change when the refreshed session requested the overview. Both are corrected in 2.1.3.
+
+Re-run `RUN_TESTS_WINDOWS.ps1` against **only the disposable `english-time-etut-test` database** before production deployment.
