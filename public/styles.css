@@ -210,27 +210,26 @@ body.teacher-panel .mini-stat b{
 .key-icon{width:21px;height:21px;border-radius:7px;display:inline-grid;place-items:center;flex:0 0 auto;font-style:normal;font-size:.8rem;background:var(--surface2);border:1px solid var(--line)}
 .key-icon.recommended{background:var(--yellow-soft);border-color:color-mix(in srgb,var(--yellow2) 62%,var(--line));color:#8c7000;font-size:.9rem}
 
-/* Teacher semantics: assignment keeps its yellow outline; full slots become solid yellow. */
-body.teacher-panel #schedule .teacher-tile.full-slot{
-  background:var(--yellow)!important;border-color:var(--yellow2)!important;color:#111!important;
-  opacity:1!important;box-shadow:0 8px 20px rgba(0,0,0,.10)
+/* Teacher: own+0 outline; own+active booking solid yellow; cancellations override. */
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel){
+  background:var(--yellow)!important;border-color:var(--yellow2)!important;
+  color:#111!important;opacity:1!important;box-shadow:0 8px 20px rgba(0,0,0,.10)
 }
-body.teacher-panel #schedule .teacher-tile.full-slot .time,
-body.teacher-panel #schedule .teacher-tile.full-slot .lvl,
-body.teacher-panel #schedule .teacher-tile.full-slot .meta,
-body.teacher-panel #schedule .teacher-tile.full-slot .capacity-mini{color:#111!important}
-body.teacher-panel #schedule .teacher-tile.full-slot .time,
-body.teacher-panel #schedule .teacher-tile.full-slot .meta,
-body.teacher-panel #schedule .teacher-tile.full-slot .capacity-mini{font-weight:850}
-body.teacher-panel #schedule .teacher-tile.full-slot.cancel{background:var(--yellow)!important;opacity:1!important}
-body.teacher-panel #schedule .teacher-tile.full-slot.own{outline:2px solid var(--yellow2);outline-offset:2px}
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .time,
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .lvl,
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .meta,
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .capacity-mini,
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .student-pill,
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .new-pill {color:#111!important}
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .student-pill {background:rgba(255,255,255,.38)}
+body.teacher-panel #schedule .teacher-tile.cancel {background:var(--surface2)!important;color:var(--text)!important}
 .student-pill{
   position:absolute;right:7px;top:7px;z-index:2;display:inline-flex;align-items:center;gap:3px;
   min-height:20px;padding:2px 6px;border-radius:999px;background:color-mix(in srgb,var(--text) 9%,var(--surface));
   border:1px solid color-mix(in srgb,var(--text) 15%,var(--line));color:var(--text);font-size:.61rem;font-weight:900;
   font-variant-numeric:tabular-nums
 }
-body.teacher-panel #schedule .teacher-tile.full-slot .student-pill{background:rgba(255,255,255,.38);border-color:rgba(17,17,17,.28);color:#111}
+body.teacher-panel #schedule .teacher-tile.own-booked:not(.cancel) .student-pill{background:rgba(255,255,255,.38);border-color:rgba(17,17,17,.28);color:#111}
 body.teacher-panel #schedule .teacher-tile.has-students .new-pill{top:32px}
 .cancel-log{margin:2px 0 18px;padding:12px 14px;border-radius:13px;border:1px solid color-mix(in srgb,var(--red) 42%,var(--line));background:color-mix(in srgb,var(--red) 8%,var(--surface));position:relative;overflow:hidden}
 .cancel-log:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--red)}

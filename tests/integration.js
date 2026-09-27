@@ -29,6 +29,8 @@ if (!DESTRUCTIVE) {
 let parsed;
 try { parsed = new URL(DB_URL); } catch { console.error('ETUT_TEST_DATABASE_URL is not a valid PostgreSQL URL.'); process.exit(2); }
 if (!/^postgres(?:ql)?:$/.test(parsed.protocol)) { console.error('Test URL must be PostgreSQL.'); process.exit(2); }
+const TEST_DB_NAME = decodeURIComponent(parsed.pathname.slice(1));
+if (!/(?:test|disposable|scratch)/i.test(TEST_DB_NAME) || /prod|kizilay|kecioren|pursaklar/i.test(TEST_DB_NAME)) { console.error('Refusing destructive suite: database name must clearly identify an isolated TEST database and must not contain any production branch name.'); process.exit(2); }
 console.log(`TEST DATABASE: ${parsed.hostname}:${parsed.port || 5432}/${parsed.pathname.replace(/^\//,'')} (credentials hidden)`);
 console.log('WARNING: the test suite DROPS AND RECREATES the public schema several times.');
 
@@ -61,7 +63,7 @@ let appLog = '';
 async function startServer(port=PORT, extraEnv={}) {
   if (appProc) throw new Error('server already running');
   appLog='';
-  appProc=spawn(process.execPath,['server.js'],{cwd:ROOT,env:{...process.env,DATABASE_URL:DB_URL,NODE_ENV:'test',PORT:String(port),SESSION_SECRET,ADMIN_PASSWORD,ETUT_ENABLE_TEST_ROUTES:'1',...extraEnv},stdio:['ignore','pipe','pipe']});
+  appProc=spawn(process.execPath,['server.js'],{cwd:ROOT,env:{...process.env,DATABASE_URL:DB_URL,NODE_ENV:'test',PORT:String(port),SESSION_SECRET,ADMIN_PASSWORD,BRANCH_CODE:'kizilay',KIZILAY_ADOPTION_APPROVED:'YES',ETUT_ENABLE_TEST_ROUTES:'1',...extraEnv},stdio:['ignore','pipe','pipe']});
   appProc.stdout.on('data',d=>{appLog+=d.toString();}); appProc.stderr.on('data',d=>{appLog+=d.toString();});
   const base=`http://127.0.0.1:${port}`;
   const deadline=Date.now()+60000;
@@ -331,7 +333,7 @@ async function operationalFailurePhase() {
   await runTest('SIGTERM triggers bounded graceful shutdown', async()=>{assert.ok(!exit.timeout,`process did not exit; log=${log}`);});
 
   // A gated test-only route throws outside Express to verify the uncaughtException strategy exits instead of continuing corrupted state.
-  const crashPort=badPort+1, crashBase=`http://127.0.0.1:${crashPort}`;let crashLog='';const crash=spawn(process.execPath,['server.js'],{cwd:ROOT,env:{...process.env,DATABASE_URL:DB_URL,NODE_ENV:'test',PORT:String(crashPort),SESSION_SECRET,ADMIN_PASSWORD:NEW_ADMIN_PASSWORD,ETUT_ENABLE_TEST_ROUTES:'1'},stdio:['ignore','pipe','pipe']});crash.stdout.on('data',d=>crashLog+=d);crash.stderr.on('data',d=>crashLog+=d);const readyDeadline=Date.now()+30000;while(Date.now()<readyDeadline){try{const r=await fetch(`${crashBase}/readyz`);if(r.status===200)break;}catch{}await sleep(100);}
+  const crashPort=badPort+1, crashBase=`http://127.0.0.1:${crashPort}`;let crashLog='';const crash=spawn(process.execPath,['server.js'],{cwd:ROOT,env:{...process.env,DATABASE_URL:DB_URL,NODE_ENV:'test',PORT:String(crashPort),SESSION_SECRET,ADMIN_PASSWORD:NEW_ADMIN_PASSWORD,BRANCH_CODE:'kizilay',KIZILAY_ADOPTION_APPROVED:'YES',ETUT_ENABLE_TEST_ROUTES:'1'},stdio:['ignore','pipe','pipe']});crash.stdout.on('data',d=>crashLog+=d);crash.stderr.on('data',d=>crashLog+=d);const readyDeadline=Date.now()+30000;while(Date.now()<readyDeadline){try{const r=await fetch(`${crashBase}/readyz`);if(r.status===200)break;}catch{}await sleep(100);}
   const trigger=await fetch(`${crashBase}/api/__test/uncaught`,{method:'POST',headers:{Origin:crashBase,'Content-Type':'application/json'},body:'{}'});assert.equal(trigger.status,202);const crashExit=await Promise.race([new Promise(r=>crash.once('exit',(code,signal)=>r({code,signal}))),sleep(12000).then(()=>({timeout:true}))]);
   await runTest('uncaughtException strategy logs and exits instead of silently continuing', async()=>{assert.ok(!crashExit.timeout,`crash process did not exit; ${crashLog}`);assert.match(crashLog,/Uncaught exception|Intentional uncaught integration-test exception/);});
 }

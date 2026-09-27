@@ -5,6 +5,8 @@ const cookieParser = require('cookie-parser');
 const ExcelJS = require('exceljs');
 const QRCode = require('qrcode');
 const db = require('./db');
+const upgrade = require('./upgrade-rules');
+const upgradeRoutes = require('./upgrade-routes');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -236,6 +238,17 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+function publicBaseUrl(req) {
+  const configured=String(process.env.PUBLIC_BASE_URL||'').trim();
+  if(configured) {
+    try {
+      const u=new URL(configured);
+      if(u.protocol!=='https:' || u.username || u.password || u.search || u.hash || (u.pathname!=='/' && u.pathname!=='')) throw Error();
+      return u.origin;
+    } catch { throw new Error('PUBLIC_BASE_URL must be a simple HTTPS origin.'); }
+  }
+  return `${req.protocol}://${req.get('host')}`;
+}
 async function audit(client, actorType, actorId, action, entityType = '', entityId = '', detail = {}) {
   await client.query(`INSERT INTO audit_logs(actor_type,actor_id,action,entity_type,entity_id,detail)
     VALUES($1,$2,$3,$4,$5,$6::jsonb)`, [actorType, actorId || null, action, entityType, String(entityId || ''), JSON.stringify(detail)]);
@@ -274,9 +287,9 @@ async function ensureOccurrence(client, slot, date, st) {
   }
   const classroom = effectiveClassroom(slot, st);
   const { rows: [occ] } = await client.query(`INSERT INTO slot_occurrences
-    (slot_id,slot_date,day,start_time,end_time,level,teacher_id,teacher_name,classroom,capacity)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(slot_id,slot_date) DO UPDATE SET slot_id=EXCLUDED.slot_id RETURNING *`,
-    [slot.id, date, slot.day, slot.start_time, slot.end_time, slot.level, slot.teacher_id, teacherName, classroom, slot.capacity || 0]);
+    (slot_id,slot_date,day,start_time,end_time,level,teacher_id,teacher_name,classroom,capacity,category_id)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(slot_id,slot_date) DO UPDATE SET slot_id=EXCLUDED.slot_id RETURNING *`,
+    [slot.id, date, slot.day, slot.start_time, slot.end_time, slot.level, slot.teacher_id, teacherName, classroom, slot.capacity || 0, slot.category_id]);
   return occ;
 }
 
@@ -285,6 +298,17 @@ async function scheduleForWeek(weekInput, viewer = {}) {
   const weekStart = normalizeWeek(weekInput);
   const weekEnd = addDays(weekStart, 6);
   const st = await db.getSettings();
+  const viewerRules = viewer.type === 'student' ? await upgrade.getStudentRules(db.pool,viewer.id,st.level_rule) : null;
+  const { rows: mappedLevels } = viewerRules ? await db.q('SELECT slot_id,category_id,level_id FROM slot_level_eligibility') : {rows:[]};
+  const allowedFor = (slot,base) => {
+    if (!base.category_id) return levelAllowed(st.level_rule,viewer.level,base.level);
+    const enrollment=viewerRules?.get(Number(base.category_id));
+    if (!enrollment) return false;
+    if (!enrollment.requires_level) return true;
+    return mappedLevels.some(x=>Number(x.slot_id)===Number(slot.id)&&Number(x.category_id)===Number(base.category_id)&&enrollment.allowed.has(Number(x.level_id)));
+  };
+  const {rows:categoryInfo}=await db.q('SELECT id,name_tr,name_en FROM etut_categories');
+  const categoryNames=new Map(categoryInfo.map(c=>[Number(c.id),c]));
   const { rows: slots } = await db.q(`SELECT s.*,t.name AS teacher_name FROM slots s LEFT JOIN teachers t ON t.id=s.teacher_id ORDER BY s.day,s.start_time,s.id`);
   const { rows: occs } = await db.q(`SELECT * FROM slot_occurrences WHERE slot_date BETWEEN $1 AND $2`, [weekStart, weekEnd]);
   const { rows: cancels } = await db.q(`SELECT * FROM slot_cancellations WHERE slot_date BETWEEN $1 AND $2`, [weekStart, weekEnd]);
@@ -326,7 +350,7 @@ async function scheduleForWeek(weekInput, viewer = {}) {
     const classroom = base.classroom || effectiveClassroom(base, st);
     const item = {
       id: slot.id, date, day: Number(base.day || slot.day), start_time: base.start_time, end_time: base.end_time,
-      level: base.level, teacher_id: base.teacher_id, teacher_name: base.teacher_name || slot.teacher_name || '', classroom,
+      level: base.level, category_id:base.category_id || slot.category_id, category_name_tr:categoryNames.get(Number(base.category_id||slot.category_id))?.name_tr||'General English',category_name_en:categoryNames.get(Number(base.category_id||slot.category_id))?.name_en||'General English', teacher_id: base.teacher_id, teacher_name: base.teacher_name || slot.teacher_name || '', classroom,
       capacity, recurring_capacity: Number(slot.capacity || 0), booked: active.length, remaining: capacity > 0 ? Math.max(0, capacity - active.length) : null,
       full: capacity > 0 && active.length >= capacity,
       cancelled: !!slot.cancelled || !!cx, cancel_note: cx?.note || slot.cancel_note || '',
@@ -342,7 +366,7 @@ async function scheduleForWeek(weekInput, viewer = {}) {
       const mine = bookings.find(b => Number(b.student_id) === Number(viewer.id));
       const activeMine = bookings.find(b => Number(b.student_id) === Number(viewer.id) && b.status === 'active');
       item.mine_status = activeMine ? 'active' : (mine ? 'cancelled_previous' : null);
-      item.allowed = levelAllowed(st.level_rule, viewer.level, item.level);
+      item.allowed = allowedFor(slot, item);
       item.bookable = !sessionHasStarted(date, item.start_time) && dateBookable(date, minDays, maxWeeks) && item.allowed && !item.cancelled && !item.full && !activeMine;
     }
     return item;
@@ -367,7 +391,7 @@ async function scheduleForWeek(weekInput, viewer = {}) {
     const capacity = Number(o.capacity || 0);
     const item = {
       id: slot.id, date, day: Number(o.day), start_time: o.start_time, end_time: o.end_time,
-      level: o.level, teacher_id: o.teacher_id, teacher_name: o.teacher_name || '',
+      level: o.level, category_id:o.category_id || slot.category_id,category_name_tr:categoryNames.get(Number(o.category_id||slot.category_id))?.name_tr||'General English',category_name_en:categoryNames.get(Number(o.category_id||slot.category_id))?.name_en||'General English', teacher_id: o.teacher_id, teacher_name: o.teacher_name || '',
       classroom: o.classroom || effectiveClassroom(o, st), capacity,
       recurring_capacity: Number(slot.capacity || 0), booked: active.length,
       remaining: capacity > 0 ? Math.max(0, capacity - active.length) : null,
@@ -385,7 +409,7 @@ async function scheduleForWeek(weekInput, viewer = {}) {
       const mine = bookings.find(b => Number(b.student_id) === Number(viewer.id));
       const activeMine = bookings.find(b => Number(b.student_id) === Number(viewer.id) && b.status === 'active');
       item.mine_status = activeMine ? 'active' : (mine ? 'cancelled_previous' : null);
-      item.allowed = levelAllowed(st.level_rule, viewer.level, item.level);
+      item.allowed = allowedFor(slot, item);
       item.bookable = slot.active !== false && !sessionHasStarted(date, item.start_time) && dateBookable(date, minDays, maxWeeks) && item.allowed && !item.cancelled && !item.full && !activeMine;
     }
     out.push(item);
@@ -501,6 +525,11 @@ async function bookSelections(req, studentInput, selections, authenticatedStuden
     } else {
       const found = await createOrGetStudent(client, publicIdentity);
       student = found.student; createdStudent = found.created;
+      // The existing public registration continues to mean General English.
+      // Do not self-enroll anyone into unrelated categories.
+      await client.query(`INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id)
+        SELECT $1,c.id,l.id FROM etut_categories c JOIN category_levels l ON l.category_id=c.id AND l.code=$2
+        WHERE c.system_key='general' ON CONFLICT(student_id,category_id) DO NOTHING`,[student.id,student.level]);
     }
 
     const ids = [...new Set(raw.map(x => x.slot_id))].sort((a,b)=>a-b);
@@ -530,13 +559,15 @@ async function bookSelections(req, studentInput, selections, authenticatedStuden
     // One canonical order for all occurrence advisory locks prevents A→B/B→A deadlocks.
     await lockOccurrences(client, normalized);
 
+    const studentRules=await upgrade.getStudentRules(client,student.id,st.level_rule);
     const prepared = [];
     for (const x of normalized.sort((a,b)=>a.date.localeCompare(b.date)||a.slot_id-b.slot_id)) {
       const occ = await ensureOccurrence(client, x.slot, x.date, st);
       const { rows: [cx] } = await client.query('SELECT note FROM slot_cancellations WHERE slot_id=$1 AND slot_date=$2', [x.slot_id, x.date]);
       if (x.slot.cancelled || cx) throw httpError(409, `${fmtTR(x.date)} ${occ.start_time} etütü iptal edilmiştir.`);
       if (sessionHasStarted(x.date, occ.start_time)) throw httpError(409, 'Başlamış veya tamamlanmış bir etüde kayıt yapılamaz.');
-      if (!levelAllowed(st.level_rule, student.level, occ.level)) throw httpError(400, `${occ.level} etütü seviyenize uygun değil.`);
+      if (occ.category_id ? !(await upgrade.allowedSlot(client,studentRules,occ.category_id,x.slot_id)) : !levelAllowed(st.level_rule, student.level, occ.level))
+        throw httpError(400, `${occ.level} etütü kayıt/izin seviyenize uygun değil.`);
       const { rows: [{ n }] } = await client.query(`SELECT COUNT(*)::int n FROM booking_slots WHERE slot_id=$1 AND slot_date=$2 AND status='active'`, [x.slot_id, x.date]);
       if (Number(occ.capacity) > 0 && Number(n) >= Number(occ.capacity)) throw httpError(409, `${fmtTR(x.date)} ${occ.start_time} etütü dolu.`);
       const dup = await client.query(`SELECT 1 FROM booking_slots WHERE slot_id=$1 AND slot_date=$2 AND student_id=$3 AND status='active'`, [x.slot_id, x.date, student.id]);
@@ -559,12 +590,17 @@ async function bookSelections(req, studentInput, selections, authenticatedStuden
       if (overlap.rowCount) throw httpError(409, `${fmtTR(x.date)} tarihinde başka bir etüdünüzle saat çakışması var.`);
     }
 
+    await upgrade.enforceWeeklyQuota(client,student.id,st,prepared.map(x=>({date:x.date})),detail=>
+      httpError(409,'Haftalık etüt limitiniz doldu.',{code:'WEEKLY_LIMIT_REACHED',...detail}));
+
     const { rows: [booking] } = await client.query(`INSERT INTO bookings(first_name,last_name,phone,level,topic,student_id)
       VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [student.first_name, student.last_name, student.phone, student.level, topic, student.id]);
     for (const x of prepared) {
-      await client.query(`INSERT INTO booking_slots(booking_id,slot_id,slot_date,day,start_time,end_time,level,teacher_name,student_id,teacher_id,classroom,capacity_snapshot)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [booking.id, x.slot_id, x.date, x.occ.day, x.occ.start_time, x.occ.end_time, x.occ.level, x.occ.teacher_name || '', student.id, x.occ.teacher_id, x.occ.classroom || '', x.occ.capacity || 0]);
+      const {rows:[catSnapshot]}=await client.query('SELECT name_tr FROM etut_categories WHERE id=$1',[x.occ.category_id]);
+      const {rows:levelSnapshot}=await client.query(`SELECT cl.code FROM slot_level_eligibility e JOIN category_levels cl ON cl.id=e.level_id WHERE e.slot_id=$1 AND e.category_id=$2 ORDER BY cl.sort_order`,[x.slot_id,x.occ.category_id]);
+      await client.query(`INSERT INTO booking_slots(booking_id,slot_id,slot_date,day,start_time,end_time,level,teacher_name,student_id,teacher_id,classroom,capacity_snapshot,category_id,category_name_snapshot,level_codes_snapshot)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [booking.id, x.slot_id, x.date, x.occ.day, x.occ.start_time, x.occ.end_time, x.occ.level, x.occ.teacher_name || '', student.id, x.occ.teacher_id, x.occ.classroom || '', x.occ.capacity || 0,x.occ.category_id,catSnapshot?.name_tr || 'General English',levelSnapshot.map(r=>r.code)]);
       if (x.occ.teacher_id) await notify(client, 'teacher', x.occ.teacher_id, 'Yeni etüt kaydı', `${student.first_name} ${student.last_name}, ${fmtTR(x.date)} ${x.occ.start_time} ${x.occ.level} etüdüne kayıt oldu.`, 'booking', x.slot_id, x.date);
       await notify(client, 'admin', 0, 'Yeni etüt kaydı', `${student.first_name} ${student.last_name} · ${fmtTR(x.date)} ${x.occ.start_time} · ${x.occ.level}`, 'booking', x.slot_id, x.date);
     }
@@ -580,12 +616,15 @@ app.get('/api/config', wrap(async (req, res) => {
   const st = await db.getSettings();
   const minDays = Number(st.min_days_ahead || 1);
   const slots = await slotsWithMeta(minDays);
+  const {rows:[general]}=await db.q("SELECT id FROM etut_categories WHERE system_key='general'");
+  const generalId=general?.id;
   res.json({
     levels: LEVELS,
-    slots: slots.map(s => ({ id: s.id, day: s.day, start_time: s.start_time, end_time: s.end_time, level: s.level,
-      teacher_name: s.teacher_name || '', classroom: s.classroom || '', cancelled: !!s.cancelled, cancel_note: s.cancel_note || '',
+    slots: slots.filter(s=>!s.category_id || Number(s.category_id)===Number(generalId)).map(s => ({ id: s.id, day: s.day, start_time: s.start_time, end_time: s.end_time, level: s.level,
+      teacher_name: '', classroom: s.classroom || '', cancelled: !!s.cancelled, cancel_note: s.cancel_note || '',
       next_date: s.date, full: !!s.full, capacity: Number(s.capacity || 0), booked: Number(s.booked || 0) })),
     classroom_weekday: st.classroom_weekday, classroom_weekend: st.classroom_weekend,
+    max_weekly_etuts:upgrade.policyLimit(st.max_weekly_etuts),branch_name:st.branch_name,
     level_rule: st.level_rule, min_days_ahead: minDays, max_weeks_ahead: Number(st.max_weeks_ahead || 6), revision: Number(st.data_revision || 1),
   });
 }));
@@ -593,7 +632,7 @@ app.get('/api/config', wrap(async (req, res) => {
 app.post('/api/bookings', rateLimit('public-booking', 25, 10 * 60 * 1000), wrap(async (req, res) => {
   const ids = [...new Set((req.body.slot_ids || []).map(Number).filter(Number.isInteger))];
   const st = await db.getSettings();
-  const { rows: slots } = await db.q('SELECT id,day FROM slots WHERE id = ANY($1::int[]) AND active=true', [ids]);
+  const { rows: slots } = await db.q("SELECT s.id,s.day FROM slots s JOIN etut_categories c ON c.id=s.category_id WHERE s.id = ANY($1::int[]) AND s.active=true AND c.system_key='general'", [ids]);
   if (slots.length !== ids.length) throw httpError(400, 'Seçilen etütlerden biri artık mevcut değil. Programı yenileyip tekrar deneyin.');
   const dayMap = new Map(slots.map(s => [s.id, s.day]));
   const selections = ids.map(id => ({ slot_id: id, date: nextDateForDay(dayMap.get(id), Number(st.min_days_ahead || 1)) }));
@@ -636,6 +675,11 @@ student.get('/dashboard', wrap(async (req, res) => {
     ORDER BY bs.slot_date DESC,bs.start_time`, [req.student.id]);
   const categorized = mine.map(x => ({ ...x, slot_date: dateISO(x.slot_date), state:
     x.status !== 'active' ? 'cancelled' : x.occurrence_cancelled ? 'cancelled_by_admin' : sessionHasEnded(dateISO(x.slot_date), x.end_time) ? 'completed' : 'upcoming' }));
+  const stQuota=await db.getSettings();
+  const weeklyLimit=await upgrade.studentWeeklyLimit(db.pool,req.student.id,stQuota);
+  const weeklyUsed=await upgrade.weeklyUsage(db.pool,req.student.id,week.week_start,week.week_end);
+  week.quota={limit:weeklyLimit,used:weeklyUsed,remaining:weeklyLimit===null?null:Math.max(0,weeklyLimit-weeklyUsed)};
+  if(weeklyLimit!==null&&weeklyUsed>=weeklyLimit)week.slots.forEach(s=>{if(s.mine_status!=='active')s.bookable=false;});
   const notifications = await viewerNotifications('student', req.student.id, 60, null, req.student.created_at);
   const { rows: [phoneRequest] } = await db.q(`SELECT * FROM phone_change_requests WHERE student_id=$1 AND status='pending' ORDER BY requested_at DESC LIMIT 1`, [req.student.id]);
   res.json({ student: { id: req.student.id, first_name: req.student.first_name, last_name: req.student.last_name, phone: req.student.phone, level: req.student.level }, week, bookings: categorized, notifications, phone_request: phoneRequest || null });
@@ -709,6 +753,7 @@ student.get('/notifications', wrap(async (req,res)=>{
   res.json({items,next_before:items.length?items[items.length-1].id:null});
 }));
 student.get('/sync-state', wrap(async (req,res)=>res.json(await db.getSyncState())));
+upgradeRoutes.registerStudent(student,{db,wrap,httpError,positiveIntParam,notify,audit});
 app.use('/api/student', student);
 
 /* ----------------------------- teacher auth/panel ----------------------------- */
@@ -804,7 +849,7 @@ const admin = express.Router();
 admin.use(wrap(requireAdmin));
 
 function safeSettings(st) {
-  const allowed = ['coordinator_name','classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead','branch_name','panel_change_message','data_revision','schedule_revision','booking_revision','account_revision','notification_revision'];
+  const allowed = ['coordinator_name','classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead','branch_name','panel_change_message','data_revision','schedule_revision','booking_revision','account_revision','notification_revision','max_weekly_etuts'];
   return Object.fromEntries(allowed.map(k => [k, st[k] ?? '']));
 }
 admin.get('/overview', wrap(async (req, res) => {
@@ -835,10 +880,12 @@ admin.get('/overview', wrap(async (req, res) => {
         AND (bs.slot_date > $1::date OR (bs.slot_date=$1::date AND bs.end_time::time > $2::time))) upcoming_participations,
     (SELECT COUNT(*)::int FROM system_logs WHERE resolved=false AND severity IN ('ERROR','CRITICAL')) unresolved_errors,
     (SELECT COUNT(*)::int FROM system_logs WHERE resolved=false AND severity='CRITICAL') unresolved_critical`, [nowParts.date, nowParts.time]);
-  const slotsForAdmin = slots.map(s => ({ ...s, next_date: s.date, date_cancelled: !!s.cancelled, legacy_cancelled: false }));
-  res.json({ settings: safeSettings(st), slots: slotsForAdmin, teachers, bookings, students, phone_requests: phoneRequests, audit: auditRows, notifications,
+  const allCats=await upgrade.categories(db.pool);
+  const {rows:eligRows}=await db.q('SELECT slot_id,category_id,level_id FROM slot_level_eligibility');
+  const slotsForAdmin = slots.map(s => ({ ...s, level_ids:eligRows.filter(x=>Number(x.slot_id)===Number(s.id)).map(x=>x.level_id),next_date: s.date, date_cancelled: !!s.cancelled, legacy_cancelled: false }));
+  res.json({categories:allCats,settings: safeSettings(st), slots: slotsForAdmin, teachers, bookings, students, phone_requests: phoneRequests, audit: auditRows, notifications,
     total_bookings: counts.total_bookings, total_students: counts.total_students, upcoming_participations: counts.upcoming_participations, log_summary:{unresolved_errors:counts.unresolved_errors,unresolved_critical:counts.unresolved_critical},
-    levels: LEVELS, site_url: `${req.protocol}://${req.get('host')}` });
+    levels: LEVELS, site_url: publicBaseUrl(req) });
 }));
 
 admin.get('/bookings', wrap(async(req,res)=>{
@@ -876,12 +923,17 @@ admin.get('/notifications', wrap(async(req,res)=>{ const before=positiveIntParam
 admin.get('/sync-state', wrap(async(req,res)=>res.json(await db.getSyncState())));
 
 admin.put('/settings', wrap(async (req, res) => {
-  const allowed = ['coordinator_name','classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead','branch_name','panel_change_message'];
+  const allowed = ['coordinator_name','classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead','branch_name','panel_change_message','max_weekly_etuts'];
   const body = { ...req.body };
   for (const k of ['coordinator_name','classroom_weekday','classroom_weekend','branch_name','panel_change_message']) if (body[k] !== undefined) body[k] = String(body[k] ?? '').trim();
   if (body.level_rule !== undefined && !['own','own_next','own_adjacent','all'].includes(String(body.level_rule))) throw httpError(400, 'Geçersiz seviye kuralı.');
   if (body.min_days_ahead !== undefined) { const d=Number(body.min_days_ahead); if(!Number.isInteger(d)||d<0||d>14) throw httpError(400,'En erken kayıt günü 0–14 arasında olmalı.'); body.min_days_ahead=String(d); }
   if (body.max_weeks_ahead !== undefined) { const d=Number(body.max_weeks_ahead); if(!Number.isInteger(d)||d<1||d>52) throw httpError(400,'Maksimum kayıt ufku 1–52 hafta arasında olmalı.'); body.max_weeks_ahead=String(d); }
+  if (body.max_weekly_etuts !== undefined) {
+    const value=String(body.max_weekly_etuts).trim();
+    if(value!=='' && (!/^\d{1,3}$/.test(value)||Number(value)>100))throw httpError(400,'Haftalık sınır boş, 0 (sınırsız) veya 1–100 olmalı.');
+    body.max_weekly_etuts=value;
+  }
   if (body.coordinator_name?.length > 100 || body.branch_name?.length > 100 || body.classroom_weekday?.length > 120 || body.classroom_weekend?.length > 120 || body.panel_change_message?.length > 500) throw httpError(400, 'Ayar alanlarından biri izin verilen uzunluğu aşıyor.');
   let newAdminSessionVersion=null;
   await db.tx(async client => {
@@ -915,7 +967,7 @@ admin.put('/settings', wrap(async (req, res) => {
       await notify(client,'all_students',null,'Sınıf bilgisi güncellendi',msg,'schedule'); await notify(client,'all_teachers',null,'Sınıf bilgisi güncellendi',msg,'schedule');
     }
     await audit(client, 'admin', 0, 'settings_updated', 'settings', 'global', { fields: Object.keys(body).filter(x => x !== 'admin_password') });
-    const domains=[]; if(Object.keys(body).some(k=>['classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead'].includes(k))) domains.push('schedule'); if(weekdayChanged||weekendChanged) domains.push('notification'); if(body.admin_password!==undefined) domains.push('account');
+    const domains=[]; if(Object.keys(body).some(k=>['classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead','max_weekly_etuts'].includes(k))) domains.push('schedule'); if(weekdayChanged||weekendChanged) domains.push('notification'); if(body.admin_password!==undefined) domains.push('account');
     await db.bumpRevisions(client, domains.length?domains:['account']);
   });
   if(newAdminSessionVersion) setSessionCookie(req,res,ADMIN_COOKIE,{role:'admin',id:0,sv:newAdminSessionVersion},SESSION_12H);
@@ -1023,6 +1075,14 @@ admin.put('/students/:id', wrap(async (req, res) => {
     const { rows: [u] } = await client.query(`UPDATE students SET first_name=$1,last_name=$2,phone=$3,level=$4,active=$5,identity_key=$6,
       session_version=session_version+$7,updated_at=NOW() WHERE id=$8 RETURNING *`, [first,last,phone,level,active,key,sensitive?1:0,id]);
     await client.query('UPDATE bookings SET first_name=$1,last_name=$2,phone=$3 WHERE student_id=$4', [first,last,phone,id]);
+    if (level !== s.level) {
+      const {rows:[general]}=await client.query("SELECT id FROM etut_categories WHERE system_key='general'");
+      const {rows:[l]}=await client.query('SELECT id FROM category_levels WHERE category_id=$1 AND code=$2',[general.id,level]);
+      await client.query(`INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id) VALUES($1,$2,$3)
+        ON CONFLICT(student_id,category_id) DO UPDATE SET primary_level_id=EXCLUDED.primary_level_id,updated_at=NOW()`,[id,general.id,l.id]);
+      await client.query(`UPDATE level_change_requests SET status='superseded',resolved_at=NOW(),resolved_by='admin' WHERE student_id=$1 AND category_id=$2 AND status='pending'`,[id,general.id]);
+      await notify(client,'student',id,'Seviyeniz güncellendi','Yeni seviyenizle yeniden giriş yapabilirsiniz.','account');
+    }
     if (phone !== s.phone) await client.query("UPDATE phone_change_requests SET status='superseded',resolved_at=NOW() WHERE student_id=$1 AND status='pending'", [id]);
     await audit(client,'admin',0,'student_updated','student',id,{ active, level, phone_changed: phone!==s.phone }); await db.bumpRevisions(client,['account','booking']); return u;
   });
@@ -1058,6 +1118,36 @@ admin.post('/phone-requests/:id/resolve', wrap(async (req, res) => {
 }));
 
 /* slot management */
+async function completeSlotModel(client, model, body, current={}) {
+  const {rows:[general]}=await client.query("SELECT id FROM etut_categories WHERE system_key='general'");
+  const categoryId=body.category_id!==undefined ? positiveIntParam(body.category_id) : Number(current.category_id || general?.id);
+  if(!categoryId)throw httpError(400,'Etüt kategorisi seçin.');
+  const {rows:[cat]}=await client.query('SELECT * FROM etut_categories WHERE id=$1 AND active=true',[categoryId]);
+  if(!cat)throw httpError(400,'Etüt kategorisi geçersiz veya arşivlenmiş.');
+  let ids;
+  if(Array.isArray(body.level_ids)){
+    ids=body.level_ids.map(positiveIntParam);
+    if(ids.some(x=>!x)||new Set(ids).size!==ids.length)throw httpError(400,'Seçilen seviyeler geçersiz.');
+  }else if(current.id && body.level===undefined && Number(current.category_id)===categoryId){
+    const {rows}=await client.query('SELECT level_id FROM slot_level_eligibility WHERE slot_id=$1 AND category_id=$2',[current.id,categoryId]);
+    ids=rows.map(r=>r.level_id);
+  }else if(cat.system_key==='general'){
+    const tokens=String(model.level||'').toUpperCase().split(/[-/,\s]+/).filter(Boolean);
+    const {rows:levels}=await client.query('SELECT id,code FROM category_levels WHERE category_id=$1 AND active=true',[categoryId]);
+    ids=tokens.map(code=>levels.find(l=>l.code===code)?.id);
+    if(ids.some(x=>!x))throw httpError(400,'General English seviye kodu geçersiz.');
+  }else ids=[];
+  const {rows:levels}=ids.length ? await client.query('SELECT id,code FROM category_levels WHERE category_id=$1 AND id=ANY($2::int[]) AND active=true ORDER BY sort_order,id',[categoryId,ids]) : {rows:[]};
+  if(cat.requires_level && (!ids.length||ids.length>3||levels.length!==ids.length))throw httpError(400,'Bu kategoride 1–3 geçerli seviye seçin.');
+  if(!cat.requires_level&&ids.length)throw httpError(400,'Bu kategori seviyesiz.');
+  model.category_id=categoryId;
+  model.level_ids=ids;
+  model.level=cat.requires_level?levels.map(l=>l.code).join(' / '):'Tümü';
+}
+async function saveSlotLevelMapping(client,slotId,model){
+  await client.query('DELETE FROM slot_level_eligibility WHERE slot_id=$1',[slotId]);
+  for(const levelId of model.level_ids)await client.query('INSERT INTO slot_level_eligibility(slot_id,category_id,level_id) VALUES($1,$2,$3)',[slotId,model.category_id,levelId]);
+}
 function slotBody(body = {}, current = {}) {
   let teacherId=current.teacher_id ?? null;
   if (body.teacher_id !== undefined) {
@@ -1077,7 +1167,7 @@ function slotBody(body = {}, current = {}) {
 function validateSlot(m) {
   if (!Number.isInteger(m.day) || m.day < 1 || m.day > 7) throw httpError(400, 'Geçersiz gün.');
   if (!validTime(m.start_time) || !validTime(m.end_time) || m.start_time >= m.end_time) throw httpError(400, 'Başlangıç ve bitiş saatlerini kontrol edin.');
-  if (!validSlotLevel(m.level)) throw httpError(400, 'Geçersiz seviye. A1, A1-A2, B1-B2 gibi bir değer kullanın.');
+  if (!m.category_id || !Array.isArray(m.level_ids)) throw httpError(400,'Etüt kategorisi ve seviyelerini seçin.');
   if (!Number.isInteger(m.capacity) || m.capacity < 0 || m.capacity > 999) throw httpError(400, 'Geçersiz kontenjan.');
 }
 function timesOverlap(aStart,aEnd,bStart,bEnd){ return aStart < bEnd && bStart < aEnd; }
@@ -1138,11 +1228,12 @@ function occurrenceOperationFromBody(body){
 }
 
 admin.post('/slots', wrap(async (req, res) => {
-  const m = slotBody(req.body); validateSlot(m); const op=occurrenceOperationFromBody(req.body);
+  const m = slotBody(req.body); const op=occurrenceOperationFromBody(req.body);
   const saved = await db.tx(async client => {
     await lockScheduleConfig(client);
-    const st=await db.getSettings(client); await validateSlotConflicts(client,m,null,st);
-    const { rows:[row] } = await client.query(`INSERT INTO slots(day,start_time,end_time,level,teacher_id,classroom,capacity,active) VALUES($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`, [m.day,m.start_time,m.end_time,m.level,m.teacher_id,m.classroom,m.capacity]);
+    const st=await db.getSettings(client); await completeSlotModel(client,m,req.body);validateSlot(m);await validateSlotConflicts(client,m,null,st);
+    const { rows:[row] } = await client.query(`INSERT INTO slots(day,start_time,end_time,level,teacher_id,classroom,capacity,active,category_id) VALUES($1,$2,$3,$4,$5,$6,$7,true,$8) RETURNING *`, [m.day,m.start_time,m.end_time,m.level,m.teacher_id,m.classroom,m.capacity,m.category_id]);
+    await saveSlotLevelMapping(client,row.id,m);
     if(op) await applyOccurrenceCancellation(client,row,op.date,op.cancelled,op.note,st);
     if(m.teacher_id){const date=nextDateForDay(m.day,Number(st.min_days_ahead||1));await notify(client,'teacher',m.teacher_id,'Etüt size atandı',`${fmtTR(date)} ${m.start_time}-${m.end_time} ${m.level} etüdü size atandı.`,'schedule',row.id,date);}
     await audit(client,'admin',0,'slot_created','slot',row.id,m); await db.bumpRevisions(client,['schedule','notification']); return row;
@@ -1158,12 +1249,12 @@ admin.put('/slots/:id', wrap(async (req, res) => {
     // BUG-044: lock only the slots row, never the nullable side of the LEFT JOIN.
     const {rows:[current]}=await client.query(`SELECT s.*,t.name teacher_name FROM slots s LEFT JOIN teachers t ON t.id=s.teacher_id WHERE s.id=$1 FOR UPDATE OF s`,[slotId]);
     if(!current || !current.active) throw httpError(404,'Etüt bulunamadı.');
-    const m=slotBody(req.body,current); validateSlot(m); await validateSlotConflicts(client,m,slotId,st);
+    const m=slotBody(req.body,current); await completeSlotModel(client,m,req.body,current);validateSlot(m);await validateSlotConflicts(client,m,slotId,st);
     let newTeacherName=''; if(m.teacher_id){const {rows:[t]}=await client.query('SELECT name FROM teachers WHERE id=$1 AND active=true AND deleted_at IS NULL',[m.teacher_id]);if(!t)throw httpError(400,'Seçilen öğretmen aktif değil.');newTeacherName=t.name;}
     const today=localDateParts().date;
     const futureDates=await relevantFutureDates(client,slotId,today);
     const {rows:[activeInfo]}=await client.query(`SELECT COUNT(DISTINCT slot_date)::int dates,COUNT(*)::int n FROM booking_slots WHERE slot_id=$1 AND slot_date >= $2 AND status='active'`,[slotId,today]);
-    if(m.level!==current.level&&Number(activeInfo.n)>0&&!req.body.confirm_level_change) throw httpError(409,`Bu etütte ${activeInfo.dates} gelecek tarih için aktif kayıt var. Seviye değişikliği mevcut öğrencileri etütte tutacak. Onay gerekli.`,{code:'LEVEL_CONFIRM',affected:activeInfo.dates});
+    if((m.level!==current.level||Number(m.category_id)!==Number(current.category_id))&&Number(activeInfo.n)>0&&!req.body.confirm_level_change) throw httpError(409,`Bu etütte ${activeInfo.dates} gelecek tarih için aktif kayıt var. Seviye değişikliği mevcut öğrencileri etütte tutacak. Onay gerekli.`,{code:'LEVEL_CONFIRM',affected:activeInfo.dates});
     // Materialize every future dated state before changing its recurring template.
     for(const d of futureDates){const {rows:[exists]}=await client.query('SELECT id FROM slot_occurrences WHERE slot_id=$1 AND slot_date=$2',[slotId,d]);if(!exists) await ensureOccurrence(client,current,d,st);}
     const plans=[]; const existingSet=new Set(futureDates);
@@ -1195,14 +1286,16 @@ admin.put('/slots/:id', wrap(async (req, res) => {
         await client.query('DELETE FROM slot_cancellations WHERE slot_id=$1 AND slot_date=$2',[slotId,oldDate]);
       }
       const room=m.classroom||effectiveClassroom(m,st);
-      await client.query(`UPDATE slot_occurrences SET slot_date=$1,day=$2,start_time=$3,end_time=$4,level=$5,teacher_id=$6,teacher_name=$7,classroom=$8,capacity=$9,updated_at=NOW() WHERE id=$10`,[newDate,m.day,m.start_time,m.end_time,m.level,m.teacher_id,newTeacherName,room,keptCapacity,occ.id]);
+      await client.query(`UPDATE slot_occurrences SET slot_date=$1,day=$2,start_time=$3,end_time=$4,level=$5,teacher_id=$6,teacher_name=$7,classroom=$8,capacity=$9,category_id=$11,updated_at=NOW() WHERE id=$10`,[newDate,m.day,m.start_time,m.end_time,m.level,m.teacher_id,newTeacherName,room,keptCapacity,occ.id,m.category_id]);
       // Move/update every preserved status, not just active rows.
-      await client.query(`UPDATE booking_slots SET slot_date=$1,day=$2,start_time=$3,end_time=$4,level=$5,teacher_id=$6,teacher_name=$7,classroom=$8,capacity_snapshot=$9,updated_at=NOW() WHERE slot_id=$10 AND slot_date=$11`,[newDate,m.day,m.start_time,m.end_time,m.level,m.teacher_id,newTeacherName,room,keptCapacity,slotId,oldDate]);
+      await client.query(`UPDATE booking_slots SET slot_date=$1,day=$2,start_time=$3,end_time=$4,teacher_id=$5,teacher_name=$6,classroom=$7,capacity_snapshot=$8,updated_at=NOW()
+        WHERE slot_id=$9 AND slot_date=$10`,[newDate,m.day,m.start_time,m.end_time,m.teacher_id,newTeacherName,room,keptCapacity,slotId,oldDate]);
       const {rows:affected}=await client.query(`SELECT DISTINCT student_id FROM booking_slots WHERE slot_id=$1 AND slot_date=$2 AND status='active' AND student_id IS NOT NULL`,[slotId,newDate]);
       if(changed.some(k=>k!=='capacity')){const detail=`${st.panel_change_message||'Program güncellendi.'} ${fmtTR(newDate)} · ${m.start_time}-${m.end_time} · ${m.level}${room?' · '+room:''}`;for(const a of affected)await notify(client,'student',a.student_id,'Etüt programınız güncellendi',detail,'schedule',slotId,newDate);}
       if(m.teacher_id&&m.teacher_id!==current.teacher_id) await notify(client,'teacher',m.teacher_id,'Etüt size atandı',`${fmtTR(newDate)} ${m.start_time}-${m.end_time} ${m.level} etüdü size atandı.`,'schedule',slotId,newDate);
     }
-    const {rows:[saved]}=await client.query(`UPDATE slots SET day=$1,start_time=$2,end_time=$3,level=$4,teacher_id=$5,classroom=$6,capacity=$7,updated_at=NOW() WHERE id=$8 RETURNING *`,[m.day,m.start_time,m.end_time,m.level,m.teacher_id,m.classroom,m.capacity,slotId]);
+    const {rows:[saved]}=await client.query(`UPDATE slots SET day=$1,start_time=$2,end_time=$3,level=$4,teacher_id=$5,classroom=$6,capacity=$7,category_id=$9,updated_at=NOW() WHERE id=$8 RETURNING *`,[m.day,m.start_time,m.end_time,m.level,m.teacher_id,m.classroom,m.capacity,slotId,m.category_id]);
+    await saveSlotLevelMapping(client,slotId,m);
     if(op) await applyOccurrenceCancellation(client,{...saved,teacher_name:newTeacherName},op.date,op.cancelled,op.note,st,{alreadyLocked:true});
     if(changed.length){await notify(client,'all_teachers',null,'Program güncellendi',st.panel_change_message||'Program eğitim koordinatörü tarafından güncellendi.','schedule',slotId,null);await notify(client,'all_students',null,'Program güncellendi',st.panel_change_message||'Program eğitim koordinatörü tarafından güncellendi.','schedule',slotId,null);}
     await audit(client,'admin',0,'slot_updated','slot',slotId,{changed,before:{day:current.day,start_time:current.start_time,end_time:current.end_time,level:current.level,teacher_id:current.teacher_id,classroom:current.classroom,capacity:current.capacity},after:m});
@@ -1303,16 +1396,16 @@ admin.get('/logs.csv',wrap(async(req,res)=>{
 }));
 
 admin.get('/qr.png',wrap(async(req,res)=>{
-  const url=String(req.query.url||`${req.protocol}://${req.get('host')}`).slice(0,500);
+  const url=String(req.query.url||publicBaseUrl(req)).slice(0,500);
   const png=await QRCode.toBuffer(url,{width:1200,margin:2,color:{dark:'#111111',light:'#FFE600'},errorCorrectionLevel:'H'});res.setHeader('Cache-Control','private, max-age=3600');res.type('png').send(png);
 }));
 admin.get('/export.xlsx',wrap(async(req,res)=>{
   const wb=new ExcelJS.Workbook(),ws=wb.addWorksheet('Etüt Kayıtları');
-  ws.columns=[{header:'Kayıt No',key:'id',width:10},{header:'Kayıt Tarihi',key:'created',width:18},{header:'Ad',key:'first',width:16},{header:'Soyad',key:'last',width:16},{header:'Telefon',key:'phone',width:15},{header:'Seviye',key:'level',width:8},{header:'Konu',key:'topic',width:30},{header:'Etüt Tarihi',key:'date',width:13},{header:'Gün',key:'day',width:12},{header:'Saat',key:'time',width:13},{header:'Etüt Seviyesi',key:'slevel',width:12},{header:'Öğretmen',key:'teacher',width:18},{header:'Sınıf',key:'room',width:20},{header:'Durum',key:'status',width:18}];
+  ws.columns=[{header:'Kayıt No',key:'id',width:10},{header:'Kayıt Tarihi',key:'created',width:18},{header:'Ad',key:'first',width:16},{header:'Soyad',key:'last',width:16},{header:'Telefon',key:'phone',width:15},{header:'Seviye',key:'level',width:8},{header:'Konu',key:'topic',width:30},{header:'Etüt Tarihi',key:'date',width:13},{header:'Gün',key:'day',width:12},{header:'Saat',key:'time',width:13},{header:'Etüt Seviyesi',key:'slevel',width:12},{header:'Öğretmen',key:'teacher',width:18},{header:'Sınıf',key:'room',width:20},{header:'Durum',key:'status',width:18},{header:'Kurs / Kategori',key:'category',width:22}];
   ws.getRow(1).font={bold:true};ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFE600'}};
-  const {rows}=await db.q(`SELECT b.*,bs.slot_date,bs.day,bs.start_time,bs.end_time,bs.level slevel,bs.teacher_name,bs.classroom,bs.status slot_status FROM bookings b LEFT JOIN booking_slots bs ON bs.booking_id=b.id ORDER BY b.created_at DESC,bs.slot_date`);
-  for(const r of rows) ws.addRow({id:r.id,created:new Date(r.created_at).toLocaleString('tr-TR',{timeZone:TZ}),first:r.first_name,last:r.last_name,phone:r.phone,level:r.level,topic:r.topic,date:r.slot_date?fmtTR(dateISO(r.slot_date)):'',day:DAYS_TR[r.day]||'',time:r.start_time?`${r.start_time}-${r.end_time}`:'',slevel:r.slevel||'',teacher:r.teacher_name||'',room:r.classroom||'',status:r.slot_status||r.status});
-  ws.autoFilter='A1:N1';res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition',`attachment; filename="etut_kayitlari_${localDateParts().date}.xlsx"`);await wb.xlsx.write(res);res.end();
+  const {rows}=await db.q(`SELECT b.*,bs.slot_date,bs.day,bs.start_time,bs.end_time,bs.level slevel,bs.teacher_name,bs.classroom,bs.status slot_status,bs.category_name_snapshot FROM bookings b LEFT JOIN booking_slots bs ON bs.booking_id=b.id ORDER BY b.created_at DESC,bs.slot_date`);
+  for(const r of rows) ws.addRow({id:r.id,created:new Date(r.created_at).toLocaleString('tr-TR',{timeZone:TZ}),first:r.first_name,last:r.last_name,phone:r.phone,level:r.level,topic:r.topic,date:r.slot_date?fmtTR(dateISO(r.slot_date)):'',day:DAYS_TR[r.day]||'',time:r.start_time?`${r.start_time}-${r.end_time}`:'',slevel:r.slevel||'',teacher:r.teacher_name||'',room:r.classroom||'',status:r.slot_status||r.status,category:r.category_name_snapshot||'General English'});
+  ws.autoFilter='A1:O1';res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');res.setHeader('Content-Disposition',`attachment; filename="etut_kayitlari_${localDateParts().date}.xlsx"`);await wb.xlsx.write(res);res.end();
 }));
 app.post('/api/client-errors', rateLimit('client-error', 20, 60 * 1000), wrap(async(req,res)=>{
   const body=db.sanitizeForLog(req.body||{}); let role='public',userId=null;
@@ -1321,6 +1414,7 @@ app.post('/api/client-errors', rateLimit('client-error', 20, 60 * 1000), wrap(as
   await db.logSystem({request_id:req.requestId,severity:'ERROR',category:'frontend',source:'browser',http_method:req.method,route:String(body.page||req.get('referer')||'/').slice(0,500),status_code:null,user_role:role,user_id:userId,action:'client_runtime_error',message:String(body.message||'Unhandled browser error').slice(0,2000),error_name:String(body.error_name||'').slice(0,120)||null,stack_trace:String(body.stack||'').slice(0,12000)||null,metadata:{filename:body.filename,line:body.line,column:body.column,user_agent:String(req.get('user-agent')||'').slice(0,300)}});
   res.status(202).json({ok:true,request_id:req.requestId});
 }));
+upgradeRoutes.registerAdmin(admin,{db,wrap,httpError,positiveIntParam,requireISODate,dateISO,lockScheduleConfig,audit,notify});
 app.use('/api/admin',admin);
 
 // Deliberately gated diagnostic endpoint used only by the destructive integration
@@ -1382,7 +1476,7 @@ async function initWithRetry(attempt=1){
   catch(e){
     dbReady=false;console.error(`⚠️ DB init failed (attempt ${attempt}): ${e.message}`);
     try{await db.logSystem({severity:'CRITICAL',category:'startup',source:'server',action:'database_init_failed',message:e.message,error_name:e.name,error_code:e.code,stack_trace:e.stack,metadata:{attempt}});}catch{}
-    if(/Secure Admin bootstrap required/.test(String(e.message))){console.error('❌ Startup stopped: configure a secure ADMIN_PASSWORD in Coolify.');process.exitCode=1;setTimeout(()=>process.exit(1),250);return;}
+    if(/Secure Admin bootstrap required|BRANCH DATABASE MISMATCH|LEGACY DATABASE NOT ADOPTED|Legacy branch identity|BRANCH_CODE must be/.test(String(e.message))){console.error('❌ Startup stopped: configure a secure ADMIN_PASSWORD in Coolify.');process.exitCode=1;setTimeout(()=>process.exit(1),250);return;}
     const delay=Math.min(30000,Math.max(3000,attempt*3000));initTimer=setTimeout(()=>initWithRetry(attempt+1),delay);
   }finally{initRunning=false;}
 }

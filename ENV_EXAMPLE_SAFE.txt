@@ -1,0 +1,45 @@
+# PLACEHOLDERS ONLY. These are Coolify RUNTIME environment variables, not GitHub files.
+# No secrets in Git, screenshots or normal chat. All three applications use one source commit.
+# Build time access OFF for secrets and other listed runtime settings; container runtime ON.
+
+# KEÇİÖREN (new app + its NEW private PostgreSQL resource)
+DATABASE_URL=<copy the PRIVATE Internal Connection URL of the NEW Keçiören DB in Coolify>
+NODE_ENV=production
+PORT=3000
+SESSION_SECRET=<new independent random 48+-character secret, stored privately>
+ADMIN_PASSWORD=<new independent strong first-bootstrap password>
+BRANCH_CODE=kecioren
+BRANCH_NAME=Keçiören
+PUBLIC_BASE_URL=https://kecioren.ankara-englishtimeetut.com
+SEED_DEFAULT_SCHEDULE=false
+# Do NOT set KIZILAY_ADOPTION_APPROVED for a new branch.
+
+# PURSAKLAR (a different new app + DIFFERENT new private PostgreSQL resource)
+DATABASE_URL=<the separate PRIVATE Internal Connection URL of Pursaklar DB>
+NODE_ENV=production
+PORT=3000
+SESSION_SECRET=<another unique secret>
+ADMIN_PASSWORD=<another unique strong initial password>
+BRANCH_CODE=pursaklar
+BRANCH_NAME=Pursaklar
+PUBLIC_BASE_URL=https://pursaklar.ankara-englishtimeetut.com
+SEED_DEFAULT_SCHEDULE=false
+
+# KIZILAY (EXISTING APP and EXACT EXISTING PRODUCTION DB, only AFTER restoration gate PASS)
+DATABASE_URL=<KEEP EXACT EXISTING KIZILAY INTERNAL DB URL UNCHANGED>
+NODE_ENV=production
+PORT=3000
+SESSION_SECRET=<KEEP EXACT EXISTING VALUE; do not rotate during cutover>
+ADMIN_PASSWORD=<KEEP EXISTING CONFIG / initial bootstrap only; persisted Admin hash wins>
+BRANCH_CODE=kizilay
+BRANCH_NAME=Kızılay
+PUBLIC_BASE_URL=https://kizilay.ankara-englishtimeetut.com
+SEED_DEFAULT_SCHEDULE=false
+# ONE-TIME migration/adoption gate: set ONLY after verified live-backup restore + PASS
+KIZILAY_ADOPTION_APPROVED=YES
+# Remove KIZILAY_ADOPTION_APPROVED after successful permanent sentinel adoption.
+
+# PRODUCTION DATABASE PORTS: DO NOT EXPOSE publicly. Do not paste URLs or credentials in chat.
+# The old apex domain remains mapped to the existing Kızılay app as an ALIAS.
+# SESSION_SECRET and ADMIN_PASSWORD must be different for each NEW branch.
+# Changing ADMIN_PASSWORD env after bootstrap does NOT reset an existing stored Admin hash.
