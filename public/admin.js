@@ -39,7 +39,6 @@
     try{
       D=await api('/api/admin/overview');
       renderAll(settingsDirty);
-      await renderLevelRequests();
       await Promise.all([loadStudents(studentData.page||1,true),loadBookings(bookingData.page||1,true)]);
       syncState=await api('/api/admin/sync-state');
     }catch(e){if(!silent&&e.status!==401)toast(e.message,true);}
@@ -53,7 +52,7 @@
       if(changed){
         const bookingChanged=!syncState||Number(next.booking_revision||0)!==Number(syncState.booking_revision||0);
         const accountChanged=!syncState||Number(next.account_revision||0)!==Number(syncState.account_revision||0);
-        D=await api('/api/admin/overview');renderAll(settingsDirty);await renderLevelRequests();
+        D=await api('/api/admin/overview');renderAll(settingsDirty);
         const jobs=[];if(bookingChanged)jobs.push(loadBookings(bookingData.page||1,true));if(accountChanged||bookingChanged)jobs.push(loadStudents(studentData.page||1,true));if(activeTab==='logs')jobs.push(loadLogs(logData.page||1,true));await Promise.all(jobs);syncState=next;
       }else syncState=next;
     }catch(e){if(e.status===401)return;}
@@ -61,7 +60,7 @@
   }
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!$('#panel').classList.contains('hidden')){clearTimeout(pollTimer);pollTimer=setTimeout(pollOnce,250);}});
 
-  function renderAll(skipSettings=false){renderOverview();renderCategories();renderSchedule();renderTeachers();renderStudents();renderBookings();renderNotifications();if(!skipSettings)fillSettings();}
+  function renderAll(skipSettings=false){renderOverview();renderSchedule();renderTeachers();renderStudents();renderBookings();renderNotifications();if(!skipSettings)fillSettings();}
   function renderOverview(){
     const up=[];for(const b of D.bookings||[])for(const s of b.slots||[])if(s.status==='active')up.push({...s,name:b.first_name+' '+b.last_name});up.sort((a,b)=>(String(a.date)+a.start).localeCompare(String(b.date)+b.start));
     const activeTeachers=(D.teachers||[]).filter(t=>t.active&&!t.deleted_at).length,pending=(D.phone_requests||[]).length,unresolved=D.log_summary?.unresolved_errors||0;
@@ -74,46 +73,16 @@
     const el=$('#aSched');el.innerHTML='';
     for(let d=1;d<=7;d++){
       const col=document.createElement('div');col.className='daycol show'+(d>=6?' weekend':'');col.innerHTML=`<div class="dayhead d${d}">${DAYS[d]}</div>`;
-      (D.slots||[]).filter(x=>Number(x.day)===d).forEach(s=>{const b=document.createElement('button');b.type='button';b.className='tile'+(s.cancelled?' cancel':'');b.innerHTML=`<span class="edit">${s.cancelled?'İPTAL':'✎ '+s.booked}</span><span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.category_name_tr||'')} · ${esc(s.level)}</span><span class="meta">${esc(s.teacher_name||'— öğretmen yok')} · ${esc(fmtDate(s.next_date||s.date))}</span><span class="capacity-mini">Kayıt ${s.capacity>0?`${s.booked}/${s.capacity}`:`${s.booked} / ∞`} · ${esc(s.classroom||'')}</span>`;b.onclick=()=>openSlot(s);col.appendChild(b);});el.appendChild(col);
+      (D.slots||[]).filter(x=>Number(x.day)===d).forEach(s=>{const b=document.createElement('button');b.type='button';b.className='tile'+(s.cancelled?' cancel':'');b.innerHTML=`<span class="edit">${s.cancelled?'İPTAL':'✎ '+s.booked}</span><span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.level)}</span><span class="meta">${esc(s.teacher_name||'— öğretmen yok')}</span><span class="capacity-mini">${s.capacity>0?`${s.booked}/${s.capacity}`:`${s.booked} kayıt`} · ${esc(s.classroom||'')}</span>`;b.onclick=()=>openSlot(s);col.appendChild(b);});el.appendChild(col);
     }
   }
-  function renderCategories(){
-    if(!D)return;
-    $('#catList').innerHTML=(D.categories||[]).map(c=>`<div class="student-row"><b>${esc(c.name_tr)} / ${esc(c.name_en)}</b><small>${esc(c.slug)} · ${c.requires_level?c.levels.map(l=>esc(l.code)+(l.active?'':' (arşiv)')).join(', '):'Seviyesiz'} · ${c.active?'Aktif':'Arşiv'}</small><div class="inline"><button class="btn ghost sm" data-cat-rename="${c.id}">Düzenle</button>${c.requires_level?`<button class="btn ghost sm" data-cat-add="${c.id}">+ Seviye</button>`:''}${c.system_key?'':`<button class="btn danger sm" data-cat-archive="${c.id}">${c.active?'Arşivle':'Geri aç'}</button>`}</div></div>`).join('');
-    $('#catList').querySelectorAll('[data-cat-rename]').forEach(b=>b.onclick=async()=>{const c=D.categories.find(x=>x.id===Number(b.dataset.catRename));const tr=prompt('Türkçe ad',c.name_tr);if(tr===null)return;const en=prompt('İngilizce ad',c.name_en);if(en===null)return;try{await api('/api/admin/categories/'+c.id,'PATCH',{name_tr:tr,name_en:en});await load();}catch(e){toast(e.message,true);}});
-    $('#catList').querySelectorAll('[data-cat-add]').forEach(b=>b.onclick=async()=>{const code=prompt('Yeni seviyenin kodu');if(!code)return;try{await api('/api/admin/categories/'+b.dataset.catAdd+'/levels','POST',{code});await load();}catch(e){toast(e.message,true);}});
-    $('#catList').querySelectorAll('[data-cat-archive]').forEach(b=>b.onclick=async()=>{const c=D.categories.find(x=>x.id===Number(b.dataset.catArchive));if(c.active&&!confirm('Kategori mevcut derslerden gizlenecek ancak geçmiş kayıtlar korunacak. Devam?'))return;try{await api('/api/admin/categories/'+c.id,'PATCH',{active:!c.active});await load();}catch(e){toast(e.message,true);}});
-  }
-  $('#catCreate').onclick=async()=>{try{
-    const requires_level=$('#catRequire').checked;
-    const levels=$('#catLevels').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-    await api('/api/admin/categories','POST',{slug:$('#catSlug').value,name_tr:$('#catTr').value,name_en:$('#catEn').value,requires_level,levels});
-    for(const el of ['catSlug','catTr','catEn','catLevels'])$('#'+el).value='';await load();toast('Yeni kategori oluşturuldu.');
-  }catch(e){toast(e.message,true);}};
-  function slotLevelOptions(selection=[]){
-    const cat=(D.categories||[]).find(x=>Number(x.id)===Number($('#sCategory').value));
-    $('#sLevelIds').innerHTML=cat?.requires_level?cat.levels.filter(l=>l.active).map(l=>`<option value="${l.id}">${esc(l.label_tr)}</option>`).join(''):'';
-    [...$('#sLevelIds').options].forEach(o=>o.selected=selection.map(Number).includes(Number(o.value)));
-    $('#sLevelIds').disabled=!cat?.requires_level;
-  }
-  $('#sCategory').onchange=()=>slotLevelOptions([]);
-  async function inspectSlotOccurrence(){
-    if(!curSlot||!$('#sCancelDate').value){$('#slotOccupancy').textContent='Etüt tarihini seçtiğinizde o güne ait kayıt listesi görüntülenir.';return;}
-    try{const x=await api(`/api/admin/slots/${curSlot.id}/occurrence?date=${encodeURIComponent($('#sCancelDate').value)}`);
-      $('#slotOccupancy').innerHTML=`<b>${esc(fmtDate(x.date))}: ${x.booked} / ${x.unlimited?'Sınırsız':x.capacity} kayıt</b>${x.cancelled?' · Tarih iptal edildi':''}`+(x.roster.length?`<div class="notice-list">${x.roster.map(r=>`<div class="student-row"><b>${esc(r.first_name)} ${esc(r.last_name)}</b><small>${esc(r.level)} · ${esc(r.status)}</small></div>`).join('')}</div>`:'<p class="note">Bu tarihte kayıtlı öğrenci yok.</p>');
-    }catch(e){$('#slotOccupancy').textContent=e.message;}
-  }
-  $('#sCancelDate').addEventListener('change',inspectSlotOccurrence);
   function openSlot(s){
     curSlot=s;$('#slotTitle').textContent=s?'Etütü düzenle':'Yeni etüt';$('#sTeacher').innerHTML='<option value="">— seçilmedi —</option>'+(D.teachers||[]).filter(t=>t.active&&!t.deleted_at).map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
-    $('#sCategory').innerHTML=(D.categories||[]).filter(c=>c.active).map(c=>`<option value="${c.id}">${esc(c.name_tr)}</option>`).join('');
-    const general=(D.categories||[]).find(c=>c.system_key==='general');$('#sCategory').value=s?.category_id||general?.id||'';
-    slotLevelOptions(s?.level_ids||[]);
-    $('#sDay').value=s?.day||1;$('#sLevel').value=s?.level||'';$('#sStart').value=s?.start_time||'';$('#sEnd').value=s?.end_time||'';$('#sTeacher').value=s?.teacher_id||'';$('#sCap').value=s?.recurring_capacity??s?.capacity??0;$('#sRoom').value=s?.classroom||'';$('#sCancel').checked=!!s?.cancelled;$('#sCancelDate').value=s?.next_date||'';$('#sNote').value=s?.cancel_note||'';$('#sDelete').classList.toggle('hidden',!s);$('#slotBg').classList.add('show');inspectSlotOccurrence();
+    $('#sDay').value=s?.day||1;$('#sLevel').value=s?.level||'';$('#sStart').value=s?.start_time||'';$('#sEnd').value=s?.end_time||'';$('#sTeacher').value=s?.teacher_id||'';$('#sCap').value=s?.recurring_capacity??s?.capacity??0;$('#sRoom').value=s?.classroom||'';$('#sCancel').checked=!!s?.cancelled;$('#sCancelDate').value=s?.next_date||'';$('#sNote').value=s?.cancel_note||'';$('#sDelete').classList.toggle('hidden',!s);$('#slotBg').classList.add('show');
   }
   $('#addSlot').onclick=()=>openSlot(null);$('#sClose').onclick=()=>$('#slotBg').classList.remove('show');
   $('#sSave').onclick=async()=>{
-    const body={day:Number($('#sDay').value),category_id:Number($('#sCategory').value),level_ids:[...$('#sLevelIds').selectedOptions].map(o=>Number(o.value)),level:$('#sLevel').value.trim().toUpperCase(),start_time:$('#sStart').value,end_time:$('#sEnd').value,teacher_id:$('#sTeacher').value||null,capacity:Number($('#sCap').value||0),classroom:$('#sRoom').value.trim()};
+    const body={day:Number($('#sDay').value),level:$('#sLevel').value.trim().toUpperCase(),start_time:$('#sStart').value,end_time:$('#sEnd').value,teacher_id:$('#sTeacher').value||null,capacity:Number($('#sCap').value||0),classroom:$('#sRoom').value.trim()};
     const date=$('#sCancelDate').value;if($('#sCancel').checked&&!date){toast('İptal için tarih seçin.',true);return;}if(date)body.occurrence={date,cancelled:$('#sCancel').checked,note:$('#sNote').value.trim()};
     try{
       if(curSlot){try{await api('/api/admin/slots/'+curSlot.id,'PUT',body);}catch(e){if(e.status===409&&e.data?.affected){if(!confirm(e.message+'\n\nMevcut öğrenciler etütte kalacak. Devam edilsin mi?'))return;await api('/api/admin/slots/'+curSlot.id,'PUT',{...body,confirm_level_change:true});}else throw e;}}
@@ -152,32 +121,8 @@
     $('#phoneRequests').innerHTML=(D?.phone_requests||[]).length?`<div class="card pending-box"><div class="eyebrow">Telefon değişikliği onayı</div>${D.phone_requests.map(r=>`<div class="request-row"><span><b>${esc(r.first_name)} ${esc(r.last_name)}</b><small>${esc(r.old_phone)} → ${esc(r.new_phone)}</small></span><div class="inline"><button class="btn ghost sm" data-pr="${r.id}" data-ok="0">Reddet</button><button class="btn primary sm" data-pr="${r.id}" data-ok="1">Onayla</button></div></div>`).join('')}</div>`:'';
     $('#phoneRequests').querySelectorAll('[data-pr]').forEach(b=>b.onclick=async()=>{try{await api('/api/admin/phone-requests/'+b.dataset.pr+'/resolve','POST',{approve:b.dataset.ok==='1'});toast('Telefon isteği işlendi.');await load();}catch(e){toast(e.message,true);}});
   }
-  async function renderLevelRequests(){
-    try{const out=await api('/api/admin/level-requests');
-      $('#levelRequests').innerHTML=out.items.length?`<div class="card pending-box"><div class="eyebrow">Seviye değişikliği talepleri</div>${out.items.map(r=>`<div class="request-row"><span><b>${esc(r.first_name)} ${esc(r.last_name)}</b><small>${esc(r.category_name)}: ${esc(r.from_code)} → ${esc(r.requested_code)} · ${esc(r.reason||'')} · ${fmtTs(r.requested_at)}</small></span><div class="inline"><button class="btn ghost sm" data-lr="${r.id}" data-approve="0">Reddet</button><button class="btn primary sm" data-lr="${r.id}" data-approve="1">Onayla</button></div></div>`).join('')}</div>`:'';
-      $('#levelRequests').querySelectorAll('[data-lr]').forEach(b=>b.onclick=async()=>{if(!confirm('Seviye isteğini sonuçlandırmak istiyor musunuz?'))return;try{await api('/api/admin/level-requests/'+b.dataset.lr+'/resolve','POST',{approve:b.dataset.approve==='1'});toast('Seviye isteği sonuçlandırıldı.');await load();}catch(e){toast(e.message,true);}});
-    }catch(e){toast(e.message,true);}
-  }
   let sSearchTimer;$('#sSearch').oninput=()=>{clearTimeout(sSearchTimer);studentSearch=$('#sSearch').value.trim();sSearchTimer=setTimeout(()=>loadStudents(1),350);};
-  async function openStudent(s){curStudent=s;$('#stFirst').value=s.first_name;$('#stLast').value=s.last_name;$('#stPhone').value=s.phone;$('#stLevel').value=s.level;$('#stActive').checked=s.active;stHistoryPage=1;$('#stHistory').innerHTML='<div class="empty">Yükleniyor…</div>';$('#studentBg').classList.add('show');await Promise.all([loadStudentHistory(1,false,true),loadStudentLearning()]);}
-  let stLearning=null;
-  async function loadStudentLearning(){
-    if(!curStudent)return;stLearning=await api(`/api/admin/students/${curStudent.id}/learning`);
-    const list=stLearning.enrollments;
-    $('#stLearningList').innerHTML=list.length?list.map(e=>`<div class="student-row"><b>${esc(e.name_tr)}: ${esc(e.primary_level_code||'Seviyesiz')}</b><small>${e.active?'Aktif':'Kapalı'} · Ek: ${esc(stLearning.grants.filter(g=>g.category_id===e.category_id&&!g.revoked_at).map(g=>D.categories.find(c=>c.id===e.category_id)?.levels.find(l=>l.id===g.level_id)?.code||'').join(', ')||'—')}</small></div>`).join(''):'<div class="empty">Kurs bulunamadı.</div>';
-    $('#stWeekLimit').value=stLearning.max_weekly_etuts??'';
-    $('#stCourseCat').innerHTML=(D.categories||[]).filter(c=>c.active).map(c=>`<option value="${c.id}">${esc(c.name_tr)}</option>`).join('');
-    $('#stCourseCat').onchange=()=>{
-      const cat=D.categories.find(c=>c.id===Number($('#stCourseCat').value));
-      const options=cat?.requires_level?cat.levels.filter(l=>l.active).map(l=>`<option value="${l.id}">${esc(l.code)}</option>`).join(''):'<option value="">Seviyesiz</option>';
-      $('#stCourseLevel').innerHTML=options;$('#stExtraLevel').innerHTML=options;
-      const existing=stLearning.enrollments.find(e=>e.category_id===cat?.id);if(existing?.primary_level_id)$('#stCourseLevel').value=existing.primary_level_id;
-    };$('#stCourseCat').onchange();
-  }
-  $('#stEnroll').onclick=async()=>{try{const c=D.categories.find(c=>c.id===Number($('#stCourseCat').value));await api(`/api/admin/students/${curStudent.id}/enrollments/${c.id}`,'PUT',{level_id:c.requires_level?Number($('#stCourseLevel').value):null,active:true});await loadStudentLearning();toast('Kurs kaydı güncellendi.');}catch(e){toast(e.message,true);}};
-  async function grantExtra(active){try{await api(`/api/admin/students/${curStudent.id}/level-grants/${$('#stExtraLevel').value}`,'PUT',{active});await loadStudentLearning();toast('Ek seviye izni güncellendi.');}catch(e){toast(e.message,true);}}
-  $('#stGrant').onclick=()=>grantExtra(true);$('#stRevoke').onclick=()=>grantExtra(false);
-  $('#stSaveLimit').onclick=async()=>{try{const raw=$('#stWeekLimit').value.trim();await api(`/api/admin/students/${curStudent.id}/weekly-limit`,'PUT',{max_weekly_etuts:raw===''?null:Number(raw)});await loadStudentLearning();toast('Haftalık öğrenci limiti güncellendi.');}catch(e){toast(e.message,true);}};
+  async function openStudent(s){curStudent=s;$('#stFirst').value=s.first_name;$('#stLast').value=s.last_name;$('#stPhone').value=s.phone;$('#stLevel').value=s.level;$('#stActive').checked=s.active;stHistoryPage=1;$('#stHistory').innerHTML='<div class="empty">Yükleniyor…</div>';$('#studentBg').classList.add('show');await loadStudentHistory(1,false,true);}
   async function loadStudentHistory(page=1,silent=false,replace=false){
     if(!curStudent)return;try{const out=await api(`/api/admin/students/${curStudent.id}/bookings?page=${page}&limit=30`);stHistoryPage=out.page;stHistoryPages=out.pages;const html=out.items.length?out.items.map(x=>`<div class="notice"><span class="notice-dot"></span><span><b>${fmtDate(x.slot_date)} · ${esc(x.start_time)}-${esc(x.end_time)} · ${esc(x.level)}</b><em>${esc(x.teacher_name||'')}${x.topic?' · '+esc(x.topic):''}</em><small>${x.status==='active'?'Aktif':esc(x.status)}</small></span></div>`).join(''):'<div class="empty">Etüt geçmişi yok.</div>';if(replace)$('#stHistory').innerHTML=html;else $('#stHistory').insertAdjacentHTML('beforeend',html);$('#stHistoryMore').classList.toggle('hidden',stHistoryPage>=stHistoryPages);}
     catch(e){if(!silent)toast(e.message,true);}

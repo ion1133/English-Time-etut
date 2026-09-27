@@ -51,7 +51,6 @@ const DEFAULT_SETTINGS = {
   account_revision: '1',
   notification_revision: '1',
   initial_schedule_seeded: 'false',
-  max_weekly_etuts: '', // Empty: grandfather existing Kızılay unlimited until Admin explicitly sets a cap.
   external_notifications_enabled: 'false',
   // Legacy SMS keys remain only so old databases can upgrade without data loss.
   // They are not read by the active application and external messaging is disabled.
@@ -90,23 +89,6 @@ async function init() {
   try {
   const { rows: [pre] } = await q("SELECT to_regclass('public.settings')::text AS settings_table");
   const hadExistingDatabase = !!pre?.settings_table;
-  // Check branch ownership BEFORE modifying even a legacy database. This is a
-  // separate, immutable DB sentinel, never client-controlled or based on a label.
-  const branchCode = String(process.env.BRANCH_CODE || (process.env.NODE_ENV === 'production' ? '' : 'kizilay')).toLowerCase();
-  if (!['kizilay','kecioren','pursaklar'].includes(branchCode)) throw new Error('BRANCH_CODE must be kizilay, kecioren or pursaklar.');
-  const { rows: [ownershipTable] } = await q("SELECT to_regclass('public.branch_identity')::text AS table_name");
-  if (ownershipTable?.table_name) {
-    const { rows: owners } = await q('SELECT branch_code FROM branch_identity');
-    if (owners.length !== 1 || owners[0].branch_code !== branchCode) throw new Error('BRANCH DATABASE MISMATCH. Startup refused before migrations.');
-  } else if (hadExistingDatabase) {
-    // Only a separately backed-up, confirmed legacy Kızılay DB may adopt a
-    // sentinel. A new app pointed at a legacy DB is stopped, not auto-claimed.
-    if (branchCode !== 'kizilay' || process.env.KIZILAY_ADOPTION_APPROVED !== 'YES') {
-      throw new Error('LEGACY DATABASE NOT ADOPTED. Verified backup + restored-copy rehearsal and KIZILAY_ADOPTION_APPROVED=YES required.');
-    }
-    const { rows: [legacyIdentity] } = await q("SELECT value FROM settings WHERE key='branch_name'");
-    if (!/k[ıi]z[ıi]lay/i.test(legacyIdentity?.value || '')) throw new Error('Legacy branch identity is inconsistent. Manual review required.');
-  }
 
   await q(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version INT PRIMARY KEY,
@@ -347,119 +329,9 @@ async function init() {
     await client.query('ALTER TABLE teacher_notifications ADD CONSTRAINT teacher_notifications_slot_id_fkey FOREIGN KEY(slot_id) REFERENCES slots(id) ON DELETE RESTRICT');
   });
 
-  await runMigration(3, 'branch_categories_weekly_policy', async client => {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS branch_identity (
-        singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-        branch_code TEXT NOT NULL CHECK (branch_code IN ('kizilay','kecioren','pursaklar')),
-        initialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-      CREATE TABLE IF NOT EXISTS etut_categories (
-        id SERIAL PRIMARY KEY, slug TEXT NOT NULL UNIQUE,
-        name_tr TEXT NOT NULL, name_en TEXT NOT NULL,
-        requires_level BOOLEAN NOT NULL DEFAULT TRUE,
-        active BOOLEAN NOT NULL DEFAULT TRUE,
-        system_key TEXT UNIQUE,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-      CREATE TABLE IF NOT EXISTS category_levels (
-        id SERIAL PRIMARY KEY,
-        category_id INT NOT NULL REFERENCES etut_categories(id) ON DELETE RESTRICT,
-        code TEXT NOT NULL, label_tr TEXT NOT NULL, label_en TEXT NOT NULL,
-        sort_order INT NOT NULL CHECK (sort_order BETWEEN 0 AND 999),
-        active BOOLEAN NOT NULL DEFAULT TRUE,
-        UNIQUE(category_id,code), UNIQUE(id,category_id)
-      );
-      CREATE TABLE IF NOT EXISTS student_category_enrollments (
-        student_id INT NOT NULL REFERENCES students(id) ON DELETE RESTRICT,
-        category_id INT NOT NULL REFERENCES etut_categories(id) ON DELETE RESTRICT,
-        primary_level_id INT,
-        active BOOLEAN NOT NULL DEFAULT TRUE,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY(student_id,category_id),
-        FOREIGN KEY(primary_level_id,category_id) REFERENCES category_levels(id,category_id)
-      );
-      CREATE TABLE IF NOT EXISTS student_level_permissions (
-        student_id INT NOT NULL,
-        category_id INT NOT NULL,
-        level_id INT NOT NULL,
-        granted_by TEXT NOT NULL DEFAULT 'admin',
-        granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        revoked_at TIMESTAMPTZ,
-        PRIMARY KEY(student_id,category_id,level_id),
-        FOREIGN KEY(student_id,category_id) REFERENCES student_category_enrollments(student_id,category_id) ON DELETE RESTRICT,
-        FOREIGN KEY(level_id,category_id) REFERENCES category_levels(id,category_id) ON DELETE RESTRICT
-      );
-      CREATE TABLE IF NOT EXISTS level_change_requests (
-        id BIGSERIAL PRIMARY KEY,
-        student_id INT NOT NULL,
-        category_id INT NOT NULL,
-        from_level_id INT NOT NULL,
-        requested_level_id INT NOT NULL,
-        reason TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','superseded')),
-        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        resolved_at TIMESTAMPTZ,
-        resolved_by TEXT,
-        resolution_note TEXT NOT NULL DEFAULT '',
-        FOREIGN KEY(student_id,category_id) REFERENCES student_category_enrollments(student_id,category_id),
-        FOREIGN KEY(from_level_id,category_id) REFERENCES category_levels(id,category_id),
-        FOREIGN KEY(requested_level_id,category_id) REFERENCES category_levels(id,category_id),
-        CHECK(from_level_id<>requested_level_id)
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS level_request_one_pending ON level_change_requests(student_id,category_id) WHERE status='pending';
-      CREATE INDEX IF NOT EXISTS level_request_inbox ON level_change_requests(status,requested_at DESC);
-      ALTER TABLE slots ADD COLUMN IF NOT EXISTS category_id INT REFERENCES etut_categories(id) ON DELETE RESTRICT;
-      ALTER TABLE slot_occurrences ADD COLUMN IF NOT EXISTS category_id INT REFERENCES etut_categories(id) ON DELETE RESTRICT;
-      ALTER TABLE booking_slots ADD COLUMN IF NOT EXISTS category_id INT REFERENCES etut_categories(id) ON DELETE RESTRICT;
-      ALTER TABLE booking_slots ADD COLUMN IF NOT EXISTS category_name_snapshot TEXT;
-      ALTER TABLE booking_slots ADD COLUMN IF NOT EXISTS level_codes_snapshot TEXT[];
-      CREATE TABLE IF NOT EXISTS slot_level_eligibility (
-        slot_id INT NOT NULL REFERENCES slots(id) ON DELETE RESTRICT,
-        category_id INT NOT NULL REFERENCES etut_categories(id) ON DELETE RESTRICT,
-        level_id INT NOT NULL,
-        PRIMARY KEY(slot_id,level_id),
-        FOREIGN KEY(level_id,category_id) REFERENCES category_levels(id,category_id)
-      );
-      CREATE INDEX IF NOT EXISTS booking_slots_quota_idx ON booking_slots(student_id,slot_date,status);
-      CREATE TABLE IF NOT EXISTS student_booking_limits (
-        student_id INT PRIMARY KEY REFERENCES students(id) ON DELETE RESTRICT,
-        max_weekly_etuts INT NOT NULL CHECK(max_weekly_etuts BETWEEN 0 AND 100),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `);
-    const presets = [
-      ['general-english','General English','General English','general', ['A1','A2','B1','B2','C1','C2']],
-      ['junior-english','Junior English','Junior English','junior', ['Junior 1','Junior 2','Junior 3','Junior 4','Junior 5','Junior 6']],
-      ['teenage-english','Teenage English','Teenage English','teenage', ['Teenage 1','Teenage 2','Teenage 3','Teenage 4','Teenage 5']]
-    ];
-    for (const [slug,tr,en,system,codes] of presets) {
-      const { rows: [category] } = await client.query(`INSERT INTO etut_categories(slug,name_tr,name_en,system_key)
-         VALUES($1,$2,$3,$4) ON CONFLICT(slug) DO UPDATE SET slug=EXCLUDED.slug RETURNING id`, [slug,tr,en,system]);
-      for (let i=0;i<codes.length;i++) await client.query(`INSERT INTO category_levels(category_id,code,label_tr,label_en,sort_order)
-         VALUES($1,$2,$2,$2,$3) ON CONFLICT(category_id,code) DO NOTHING`, [category.id,codes[i],i+1]);
-    }
-  });
-  // Owner-approved extension: Teenage 1–5, including a safe idempotent upgrade
-  // for any disposable staging database that already applied candidate v3.
-  await runMigration(4, 'teenage_fifth_level', async client => {
-    await client.query(`INSERT INTO category_levels(category_id,code,label_tr,label_en,sort_order)
-      SELECT id, 'Teenage 5', 'Teenage 5', 'Teenage 5', 5 FROM etut_categories
-      WHERE system_key='teenage' AND active=true
-      ON CONFLICT(category_id,code) DO NOTHING`);
-  });
-  // An existing Kızılay DB can only get a sentinel under the explicit adoption
-  // gate checked above; a NEW DB is claimed only with its configured code.
-  await q('INSERT INTO branch_identity(singleton,branch_code) VALUES(TRUE,$1) ON CONFLICT(singleton) DO NOTHING', [branchCode]);
-  const { rows: [owner] } = await q('SELECT branch_code FROM branch_identity WHERE singleton=TRUE');
-  if (owner?.branch_code !== branchCode) throw new Error('BRANCH DATABASE MISMATCH after initialization.');
-
   // Add defaults after migrations without overwriting production values.
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-    const newBranchName=String(process.env.BRANCH_NAME || (branchCode === 'kecioren' ? 'Keçiören' : branchCode === 'pursaklar' ? 'Pursaklar' : 'Kızılay')).trim();
-    const initialValue = key === 'branch_name' && !hadExistingDatabase ? newBranchName : value;
-    await q('INSERT INTO settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING', [key, initialValue]);
+    await q('INSERT INTO settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING', [key, value]);
   }
 
   // Secure Admin bootstrap/migration. A known historical fallback is never accepted.
@@ -487,7 +359,7 @@ async function init() {
     const st = await getSettings(client);
     if (st.initial_schedule_seeded !== 'true') {
       const { rows: [{ n }] } = await client.query('SELECT COUNT(*)::int AS n FROM slots');
-      if (!hadExistingDatabase && n === 0 && process.env.SEED_DEFAULT_SCHEDULE !== 'false' && branchCode === 'kizilay') {
+      if (!hadExistingDatabase && n === 0) {
         for (const s of SEED_SLOTS) {
           await client.query('INSERT INTO slots (day,start_time,end_time,level) VALUES ($1,$2,$3,$4)', [s.day, s.start, s.end, s.level]);
         }
@@ -529,22 +401,6 @@ async function init() {
      GROUP BY bs.slot_id, bs.slot_date
     ON CONFLICT(slot_id,slot_date) DO NOTHING
   `);
-
-  // Safe idempotent legacy General English backfill. Never rewrite the legacy
-  // level text or old historical snapshots, and never enroll unrelated subjects.
-  await tx(async client => {
-    const { rows: [general] } = await client.query("SELECT id FROM etut_categories WHERE system_key='general'");
-    if (!general) throw new Error('General English preset missing');
-    await client.query(`INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id)
-      SELECT s.id,$1,l.id FROM students s JOIN category_levels l ON l.category_id=$1 AND l.code=s.level
-      ON CONFLICT(student_id,category_id) DO NOTHING`, [general.id]);
-    await client.query('UPDATE slots SET category_id=$1 WHERE category_id IS NULL',[general.id]);
-    await client.query('UPDATE slot_occurrences SET category_id=s.category_id FROM slots s WHERE slot_occurrences.slot_id=s.id AND slot_occurrences.category_id IS NULL');
-    await client.query('UPDATE booking_slots SET category_id=$1, category_name_snapshot=COALESCE(category_name_snapshot,$2), level_codes_snapshot=COALESCE(level_codes_snapshot,string_to_array(level,'-')) WHERE category_id IS NULL', [general.id,'General English']);
-    await client.query(`INSERT INTO slot_level_eligibility(slot_id,category_id,level_id)
-      SELECT s.id,$1,cl.id FROM slots s JOIN category_levels cl ON cl.category_id=$1 AND cl.code=ANY(string_to_array(s.level,'-'))
-      WHERE s.category_id=$1 ON CONFLICT DO NOTHING`,[general.id]);
-  });
   } finally {
     try { await initLockClient.query('SELECT pg_advisory_unlock($1)', [INIT_LOCK_KEY]); } finally { initLockClient.release(); }
   }
