@@ -184,7 +184,7 @@
   }
   $('#stHistoryMore').onclick=()=>loadStudentHistory(stHistoryPage+1);
   $('#stClose').onclick=()=>$('#studentBg').classList.remove('show');
-  $('#stSave').onclick=async()=>{try{await api('/api/admin/students/'+curStudent.id,'PUT',{first_name:$('#stFirst').value,last_name:$('#stLast').value,phone:$('#stPhone').value,level:$('#stLevel').value,active:$('#stActive').checked});$('#studentBg').classList.remove('show');toast('Öğrenci güncellendi.');await load();}catch(e){toast(e.message,true);}};
+  $('#stSave').onclick=async()=>{try{await api('/api/admin/students/'+curStudent.id,'PUT',{first_name:$('#stFirst').value,last_name:$('#stLast').value,phone:$('#stPhone').value,active:$('#stActive').checked});$('#studentBg').classList.remove('show');toast('Öğrenci güncellendi. Kurs/seviye değişiklikleri aşağıdaki kategori bölümünden yapılır.');await load();}catch(e){toast(e.message,true);}};
   $('#stLogoutAll').onclick=async()=>{if(!confirm('Öğrencinin tüm cihazlardaki oturumları kapatılsın mı?'))return;try{await api('/api/admin/students/'+curStudent.id+'/logout-all','POST');toast('Öğrenci oturumları kapatıldı.');await load();}catch(e){toast(e.message,true);}};
 
   async function loadBookings(page=1,silent=false){try{const p=new URLSearchParams({page:String(page),limit:'50'});if(bookingSearch)p.set('q',bookingSearch);bookingData=await api('/api/admin/bookings?'+p);renderBookings();}catch(e){if(!silent)toast(e.message,true);}}

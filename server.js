@@ -471,19 +471,62 @@ async function clearFutureTeacherAssignments(client, teacherId, reason = 'Öğre
   return { students:students.length, occurrences:new Set([...affectedRows,...occRows].map(r=>`${r.slot_id}|${r.date}`)).size };
 }
 
-async function createOrGetStudent(client, { first, last, phone, level }) {
+async function resolveCourseSelection(client, input = {}, { legacyGeneral = true } = {}) {
+  let categoryId = positiveIntParam(input.category_id);
+  const legacyLevel = String(input.level || '').trim();
+  let category;
+  if (categoryId) {
+    const { rows: [row] } = await client.query(`SELECT id,slug,name_tr,name_en,requires_level,active,system_key
+      FROM etut_categories WHERE id=$1 AND active=true`, [categoryId]);
+    category = row;
+  } else if (legacyGeneral) {
+    const { rows: [row] } = await client.query(`SELECT id,slug,name_tr,name_en,requires_level,active,system_key
+      FROM etut_categories WHERE system_key='general' AND active=true`);
+    category = row;
+    categoryId = row?.id;
+  }
+  if (!category) throw httpError(400, 'Geçerli bir kategori seçin.');
+
+  let level = null;
+  if (category.requires_level) {
+    const levelId = positiveIntParam(input.level_id);
+    if (levelId) {
+      const { rows: [row] } = await client.query(`SELECT id,category_id,code,label_tr,label_en,sort_order
+        FROM category_levels WHERE id=$1 AND category_id=$2 AND active=true`, [levelId, category.id]);
+      level = row;
+    } else if (legacyLevel) {
+      const { rows: [row] } = await client.query(`SELECT id,category_id,code,label_tr,label_en,sort_order
+        FROM category_levels WHERE category_id=$1 AND LOWER(code)=LOWER($2) AND active=true`, [category.id, legacyLevel]);
+      level = row;
+    }
+    if (!level) throw httpError(400, 'Bu kategori için geçerli bir seviye seçin.');
+  } else if (input.level_id !== undefined && input.level_id !== null && input.level_id !== '') {
+    throw httpError(400, 'Bu kategori seviye gerektirmiyor.');
+  }
+  return { category, level, category_id:Number(category.id), level_id:level ? Number(level.id) : null };
+}
+
+async function createOrGetStudent(client, { first, last, phone, course }) {
   const key = db.identityKey(phone, first, last);
   const { rows: [existing] } = await client.query('SELECT * FROM students WHERE identity_key=$1 FOR UPDATE', [key]);
   if (existing) {
     if (!existing.active) throw httpError(403, 'Bu bilgilerle işlem yapılamıyor. Eğitim koordinatörüyle görüşün.');
-    if (existing.level !== level) throw httpError(409, 'Bu bilgiler mevcut öğrenci kaydıyla eşleşmiyor. Eğitim koordinatörüyle görüşün.');
+    const { rows: [enrollment] } = await client.query(`SELECT e.category_id,e.primary_level_id,e.active
+      FROM student_category_enrollments e JOIN etut_categories c ON c.id=e.category_id AND c.active=true
+      WHERE e.student_id=$1 AND e.category_id=$2`, [existing.id, course.category_id]);
+    const matches = !!enrollment && enrollment.active && (!course.category.requires_level || Number(enrollment.primary_level_id) === Number(course.level_id));
+    if (!matches) throw httpError(409, 'Bu bilgiler mevcut bir öğrenci kaydıyla eşleşiyor. Yeni kategori eklemek için öğrenci paneline giriş yapın.');
     return { student: existing, created: false };
   }
+
+  const compatibilityLevel = course.level?.code || course.category.name_tr || course.category.slug;
   const { rows: [student] } = await client.query(`INSERT INTO students(first_name,last_name,phone,level,identity_key)
     VALUES($1,$2,$3,$4,$5)
     ON CONFLICT(identity_key) DO UPDATE SET updated_at=students.updated_at
-    RETURNING *`, [first, last, phone, level, key]);
-  if (!student.active || student.level !== level) throw httpError(409, 'Bu bilgiler mevcut öğrenci kaydıyla eşleşmiyor. Eğitim koordinatörüyle görüşün.');
+    RETURNING *`, [first, last, phone, compatibilityLevel, key]);
+  if (!student.active) throw httpError(409, 'Bu bilgiler mevcut öğrenci kaydıyla eşleşmiyor. Eğitim koordinatörüyle görüşün.');
+  await client.query(`INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id,active)
+    VALUES($1,$2,$3,true) ON CONFLICT(student_id,category_id) DO NOTHING`, [student.id, course.category_id, course.level_id]);
   return { student, created: true };
 }
 
@@ -494,11 +537,10 @@ async function bookSelections(req, studentInput, selections, authenticatedStuden
   let publicIdentity = null;
   if (!authenticatedStudentId) {
     const first = cleanName(studentInput?.first_name), last = cleanName(studentInput?.last_name);
-    const phone = cleanPhone(studentInput?.phone), level = String(studentInput?.level || '').toUpperCase();
+    const phone = cleanPhone(studentInput?.phone);
     if (!nameOk(first) || !nameOk(last)) throw httpError(400, 'İsim ve soyisim geçerli harflerden oluşmalıdır.');
     if (!isValidTRPhone(phone)) throw httpError(400, 'Telefon 05XX XXX XX XX formatında olmalıdır.');
-    if (!LEVELS.includes(level)) throw httpError(400, 'Geçersiz seviye.');
-    publicIdentity = { first, last, phone, level };
+    publicIdentity = { first, last, phone };
   }
 
   const raw = selections.map(x => {
@@ -517,19 +559,15 @@ async function bookSelections(req, studentInput, selections, authenticatedStuden
   return db.tx(async client => {
     await lockScheduleConfig(client);
     const st = await db.getSettings(client);
-    let student, createdStudent = false;
+    let student, createdStudent = false, publicCourse = null;
     if (authenticatedStudentId) {
       const { rows: [locked] } = await client.query('SELECT * FROM students WHERE id=$1 FOR UPDATE', [authenticatedStudentId]);
       if (!locked || !locked.active) throw httpError(401, 'Öğrenci oturumu artık geçerli değil.');
       student = locked;
     } else {
-      const found = await createOrGetStudent(client, publicIdentity);
+      publicCourse = await resolveCourseSelection(client, studentInput, { legacyGeneral:true });
+      const found = await createOrGetStudent(client, { ...publicIdentity, course:publicCourse });
       student = found.student; createdStudent = found.created;
-      // The existing public registration continues to mean General English.
-      // Do not self-enroll anyone into unrelated categories.
-      await client.query(`INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id)
-        SELECT $1,c.id,l.id FROM etut_categories c JOIN category_levels l ON l.category_id=c.id AND l.code=$2
-        WHERE c.system_key='general' ON CONFLICT(student_id,category_id) DO NOTHING`,[student.id,student.level]);
     }
 
     const ids = [...new Set(raw.map(x => x.slot_id))].sort((a,b)=>a-b);
@@ -538,6 +576,9 @@ async function bookSelections(req, studentInput, selections, authenticatedStuden
       WHERE s.id=ANY($1::int[]) AND s.active=true ORDER BY s.id FOR SHARE OF s`, [ids]);
     const slotMap = new Map(slotRows.map(x => [Number(x.id), x]));
     if (slotRows.length !== ids.length) throw httpError(404, 'Seçilen etütlerden biri bulunamadı veya artık aktif değil.');
+    if (publicCourse && slotRows.some(x => Number(x.category_id) !== Number(publicCourse.category_id))) {
+      throw httpError(400, 'Seçilen etüt seçtiğiniz kategoriye ait değil.');
+    }
 
     const normalized = [];
     const normalizedSeen = new Set();
@@ -616,11 +657,21 @@ app.get('/api/config', wrap(async (req, res) => {
   const st = await db.getSettings();
   const minDays = Number(st.min_days_ahead || 1);
   const slots = await slotsWithMeta(minDays);
-  const {rows:[general]}=await db.q("SELECT id FROM etut_categories WHERE system_key='general'");
-  const generalId=general?.id;
+  const categories = (await upgrade.categories(db.pool)).filter(c => c.active).map(c => ({
+    ...c, levels:(c.levels || []).filter(l => l.active),
+  }));
+  const activeIds = new Set(categories.map(c => Number(c.id)));
+  const { rows: eligibility } = await db.q('SELECT slot_id,category_id,level_id FROM slot_level_eligibility');
+  const bySlot = new Map();
+  for (const e of eligibility) {
+    if (!bySlot.has(Number(e.slot_id))) bySlot.set(Number(e.slot_id), []);
+    bySlot.get(Number(e.slot_id)).push(Number(e.level_id));
+  }
   res.json({
-    levels: LEVELS,
-    slots: slots.filter(s=>!s.category_id || Number(s.category_id)===Number(generalId)).map(s => ({ id: s.id, day: s.day, start_time: s.start_time, end_time: s.end_time, level: s.level,
+    levels: LEVELS, // legacy API compatibility
+    categories,
+    slots: slots.filter(s=>activeIds.has(Number(s.category_id))).map(s => ({ id: s.id, day: s.day, start_time: s.start_time, end_time: s.end_time, level: s.level,
+      category_id:Number(s.category_id), category_name_tr:s.category_name_tr, category_name_en:s.category_name_en, level_ids:bySlot.get(Number(s.id)) || [],
       teacher_name: '', classroom: s.classroom || '', cancelled: !!s.cancelled, cancel_note: s.cancel_note || '',
       next_date: s.date, full: !!s.full, capacity: Number(s.capacity || 0), booked: Number(s.booked || 0) })),
     classroom_weekday: st.classroom_weekday, classroom_weekend: st.classroom_weekend,
@@ -632,7 +683,7 @@ app.get('/api/config', wrap(async (req, res) => {
 app.post('/api/bookings', rateLimit('public-booking', 25, 10 * 60 * 1000), wrap(async (req, res) => {
   const ids = [...new Set((req.body.slot_ids || []).map(Number).filter(Number.isInteger))];
   const st = await db.getSettings();
-  const { rows: slots } = await db.q("SELECT s.id,s.day FROM slots s JOIN etut_categories c ON c.id=s.category_id WHERE s.id = ANY($1::int[]) AND s.active=true AND c.system_key='general'", [ids]);
+  const { rows: slots } = await db.q("SELECT s.id,s.day FROM slots s JOIN etut_categories c ON c.id=s.category_id WHERE s.id = ANY($1::int[]) AND s.active=true AND c.active=true", [ids]);
   if (slots.length !== ids.length) throw httpError(400, 'Seçilen etütlerden biri artık mevcut değil. Programı yenileyip tekrar deneyin.');
   const dayMap = new Map(slots.map(s => [s.id, s.day]));
   const selections = ids.map(id => ({ slot_id: id, date: nextDateForDay(dayMap.get(id), Number(st.min_days_ahead || 1)) }));
@@ -644,16 +695,23 @@ app.post('/api/bookings', rateLimit('public-booking', 25, 10 * 60 * 1000), wrap(
 /* ----------------------------- student auth/panel ----------------------------- */
 const student = express.Router();
 app.post('/api/student/login', rateLimit('student-login', 30, 10 * 60 * 1000), wrap(async (req, res) => {
-  const first = cleanName(req.body.first_name), last = cleanName(req.body.last_name), phone = cleanPhone(req.body.phone), level = String(req.body.level || '').toUpperCase();
-  if (!nameOk(first) || !nameOk(last) || !isValidTRPhone(phone) || !LEVELS.includes(level)) throw httpError(400, 'Bilgilerinizi kontrol edin.');
+  const first = cleanName(req.body.first_name), last = cleanName(req.body.last_name), phone = cleanPhone(req.body.phone);
+  if (!nameOk(first) || !nameOk(last) || !isValidTRPhone(phone)) throw httpError(400, 'Bilgilerinizi kontrol edin.');
   const key = db.identityKey(phone, first, last);
   const { rows: [s] } = await db.q('SELECT * FROM students WHERE identity_key=$1', [key]);
-  if (!s || s.level !== level) throw httpError(401, 'Bu bilgilerle eşleşen öğrenci kaydı bulunamadı. İlk etüt kaydınızı ana sayfadan oluşturabilirsiniz.');
+  if (!s) throw httpError(401, 'Bu bilgilerle eşleşen öğrenci kaydı bulunamadı. İlk etüt kaydınızı ana sayfadan oluşturabilirsiniz.');
   if (!s.active) throw httpError(403, 'Öğrenci paneli erişiminiz yönetici tarafından devre dışı bırakılmıştır.');
+  const course = await resolveCourseSelection(db.pool, req.body, { legacyGeneral:true });
+  const { rows: [enrollment] } = await db.q(`SELECT e.primary_level_id,e.active FROM student_category_enrollments e
+    JOIN etut_categories c ON c.id=e.category_id AND c.active=true
+    WHERE e.student_id=$1 AND e.category_id=$2`, [s.id, course.category_id]);
+  const matches = !!enrollment && enrollment.active && (!course.category.requires_level || Number(enrollment.primary_level_id) === Number(course.level_id));
+  if (!matches) throw httpError(401, 'Bu bilgilerle eşleşen öğrenci kaydı bulunamadı. İlk etüt kaydınızı ana sayfadan oluşturabilirsiniz.');
   setSessionCookie(req, res, STUDENT_COOKIE, { role: 'student', id: s.id, sv: s.session_version }, SESSION_30D);
-  await db.tx(c => audit(c, 'student', s.id, 'login', 'student', s.id));
+  await db.tx(c => audit(c, 'student', s.id, 'login', 'student', s.id, { category_id:course.category_id }));
   res.json({ ok: true });
 }));
+
 app.post('/api/student/logout', (req, res) => { clearCookie(res, STUDENT_COOKIE); res.json({ ok: true }); });
 app.get('/api/student/me', wrap(async (req, res) => {
   const p = verify(req.cookies[STUDENT_COOKIE]);
@@ -1067,7 +1125,7 @@ admin.put('/students/:id', wrap(async (req, res) => {
     const phone = req.body.phone === undefined ? s.phone : cleanPhone(req.body.phone);
     const level = req.body.level === undefined ? s.level : String(req.body.level).toUpperCase();
     const active = req.body.active === undefined ? s.active : !!req.body.active;
-    if (!nameOk(first) || !nameOk(last) || !isValidTRPhone(phone) || !LEVELS.includes(level)) throw httpError(400, 'Öğrenci bilgileri geçersiz.');
+    if (!nameOk(first) || !nameOk(last) || !isValidTRPhone(phone) || (req.body.level !== undefined && !LEVELS.includes(level))) throw httpError(400, 'Öğrenci bilgileri geçersiz.');
     const key = db.identityKey(phone, first, last);
     const conflict = await client.query('SELECT 1 FROM students WHERE identity_key=$1 AND id<>$2', [key, id]);
     if (conflict.rowCount) throw httpError(409, 'Aynı telefon ve isimle başka bir öğrenci zaten var.');
@@ -1075,7 +1133,7 @@ admin.put('/students/:id', wrap(async (req, res) => {
     const { rows: [u] } = await client.query(`UPDATE students SET first_name=$1,last_name=$2,phone=$3,level=$4,active=$5,identity_key=$6,
       session_version=session_version+$7,updated_at=NOW() WHERE id=$8 RETURNING *`, [first,last,phone,level,active,key,sensitive?1:0,id]);
     await client.query('UPDATE bookings SET first_name=$1,last_name=$2,phone=$3 WHERE student_id=$4', [first,last,phone,id]);
-    if (level !== s.level) {
+    if (req.body.level !== undefined && level !== s.level) {
       const {rows:[general]}=await client.query("SELECT id FROM etut_categories WHERE system_key='general'");
       const {rows:[l]}=await client.query('SELECT id FROM category_levels WHERE category_id=$1 AND code=$2',[general.id,level]);
       await client.query(`INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id) VALUES($1,$2,$3)

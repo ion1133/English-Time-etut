@@ -85,7 +85,9 @@ async function loginAdmin(){const jar={cookie:''};const r=await api('POST','/api
 async function slot(admin,level,hour,room,opts={}){const payload={day:weekdayNo,start_time:hour,end_time:(()=>{const [h,m]=hour.split(':').map(Number),end=h*60+m+25;return `${String(Math.floor(end/60)).padStart(2,'0')}:${String(end%60).padStart(2,'0')}`;})(),level,capacity:opts.capacity??0,classroom:room,...opts};
   const r=await api('POST','/api/admin/slots',payload,admin);assert.equal(r.status,200,JSON.stringify(r.data));return r.data;}
 async function studentPublic(slotId,n){return api('POST','/api/bookings',{first_name:'Upgradeperson',last_name:'Synthetic',phone:phone(n),level:'A1',slot_ids:[slotId],topic:'isolated integration test'});}
+async function studentPublicCourse(slotId,n,categoryId,levelId){return api('POST','/api/bookings',{first_name:'Upgradeperson',last_name:'Synthetic',phone:phone(n),category_id:categoryId,level_id:levelId,slot_ids:[slotId],topic:'isolated category integration test'});}
 async function studentLogin(n,level='A1'){const jar={cookie:''};const r=await api('POST','/api/student/login',{first_name:'Upgradeperson',last_name:'Synthetic',phone:phone(n),level},jar);assert.equal(r.status,200,JSON.stringify(r.data));return jar;}
+async function studentLoginCourse(n,categoryId,levelId){const jar={cookie:''};const r=await api('POST','/api/student/login',{first_name:'Upgradeperson',last_name:'Synthetic',phone:phone(n),category_id:categoryId,level_id:levelId},jar);assert.equal(r.status,200,JSON.stringify(r.data));return jar;}
 async function test(name,fn){await fn();npass++;console.log('PASS ',name);}
 async function main(){
   await reset();await start('kecioren');
@@ -139,14 +141,41 @@ async function main(){
   const {rows:levels}=await q('SELECT id,code FROM category_levels WHERE category_id=$1 ORDER BY sort_order',[german.id]);
   const germanOne=await slot(admin,'A1','19:20','GERMAN-A1',{category_id:german.id,level_ids:[levels[0].id]});
   const germanTwo=await slot(admin,'A2','20:05','GERMAN-A2',{category_id:german.id,level_ids:[levels[1].id]});
+  await test('Public catalog exposes all active categories with category-scoped levels',async()=>{
+    const r=await api('GET','/api/config');assert.equal(r.status,200,JSON.stringify(r.data));
+    const g=r.data.categories.find(c=>Number(c.id)===Number(german.id));assert.ok(g);assert.deepEqual(g.levels.map(l=>l.code),['A1','A2']);
+    assert.ok(r.data.categories.some(c=>c.system_key==='junior'));assert.ok(r.data.categories.some(c=>c.system_key==='teenage'));
+  });
   await test('Student cannot access un-enrolled category (even if similar level code)',async()=>{
     const r=await api('POST','/api/student/book',{selections:[{slot_id:germanOne.id,date:day}]},student);assert.equal(r.status,400,JSON.stringify(r.data));
   });
+  await test('Existing identity cannot self-enroll a new category through unauthenticated public booking',async()=>{
+    const r=await studentPublicCourse(germanOne.id,person,german.id,levels[0].id);assert.equal(r.status,409,JSON.stringify(r.data));
+  });
   const {rows:[dbStudent]}=await q('SELECT id FROM students WHERE phone=$1',[phone(person)]);
-  await test('Admin category enrollment and per-student override are branch-local',async()=>{
-    let r=await api('PUT',`/api/admin/students/${dbStudent.id}/enrollments/${german.id}`,{level_id:levels[0].id,active:true},admin);assert.equal(r.status,200,JSON.stringify(r.data));
-    r=await api('PUT',`/api/admin/students/${dbStudent.id}/weekly-limit`,{max_weekly_etuts:0},admin);assert.equal(r.status,200,JSON.stringify(r.data));
+  await test('Authenticated Student can self-enroll in an active category and then book it',async()=>{
+    let r=await api('POST','/api/student/enrollments',{category_id:german.id,level_id:levels[0].id},student);assert.equal(r.status,201,JSON.stringify(r.data));
+    const learning=await api('GET','/api/student/learning',undefined,student);assert.equal(learning.status,200);assert.ok(learning.data.enrollments.some(e=>Number(e.category_id)===Number(german.id)&&Number(e.primary_level_id)===Number(levels[0].id)));
     r=await api('POST','/api/student/book',{selections:[{slot_id:germanOne.id,date:day}]},student);assert.equal(r.status,200,JSON.stringify(r.data));
+  });
+  await test('Self-enrollment cannot silently change an existing category level',async()=>{
+    const r=await api('POST','/api/student/enrollments',{category_id:german.id,level_id:levels[1].id},student);assert.equal(r.status,409,JSON.stringify(r.data));
+  });
+  await test('Per-student weekly override remains branch-local after self-enrollment',async()=>{
+    const r=await api('PUT',`/api/admin/students/${dbStudent.id}/weekly-limit`,{max_weekly_etuts:0},admin);assert.equal(r.status,200,JSON.stringify(r.data));
+  });
+  const germanOnly=4799;
+  await test('First registration can start directly in an Admin-created category and category login works',async()=>{
+    let r=await studentPublicCourse(germanOne.id,germanOnly,german.id,levels[0].id);assert.equal(r.status,200,JSON.stringify(r.data));
+    const {rows:[counts]}=await q(`SELECT COUNT(*) FILTER(WHERE e.active)::int all_active,COUNT(*) FILTER(WHERE c.system_key='general' AND e.active)::int general_active
+      FROM students s JOIN student_category_enrollments e ON e.student_id=s.id JOIN etut_categories c ON c.id=e.category_id WHERE s.phone=$1`,[phone(germanOnly)]);
+    assert.equal(counts.all_active,1);assert.equal(counts.general_active,0);
+    const jar=await studentLoginCourse(germanOnly,german.id,levels[0].id);const dash=await api('GET','/api/student/dashboard',undefined,jar);assert.equal(dash.status,200);
+    r=await api('POST','/api/student/login',{first_name:'Upgradeperson',last_name:'Synthetic',phone:phone(germanOnly),level:'A1'});assert.equal(r.status,401);
+  });
+  await test('Public booking rejects category/slot tampering and rolls back new identity creation',async()=>{
+    const tamper=4800;const r=await studentPublicCourse(slots[0].id,tamper,german.id,levels[0].id);assert.equal(r.status,400,JSON.stringify(r.data));
+    const {rows:[x]}=await q('SELECT COUNT(*)::int n FROM students WHERE phone=$1',[phone(tamper)]);assert.equal(x.n,0);
   });
   await test('Additional level is denied before explicit permission when global rule is own-only',async()=>{
     const r=await api('POST','/api/student/book',{selections:[{slot_id:germanTwo.id,date:day}]},student);assert.equal(r.status,400,JSON.stringify(r.data));
@@ -169,7 +198,7 @@ async function main(){
     const newLogin=await studentLogin(person,'A2');const learning=await api('GET','/api/student/learning',undefined,newLogin);assert.equal(learning.status,200);
     const {rows:snapshots}=await q("SELECT DISTINCT level FROM booking_slots WHERE student_id=$1 AND status='active'",[dbStudent.id]);assert.ok(snapshots.some(s=>s.level==='A1'));
   });
-  const {rows:[kecCount]}=await q("SELECT COUNT(*)::int n FROM students");assert.equal(kecCount.n,1);
+  const {rows:[kecCount]}=await q("SELECT COUNT(*)::int n FROM students");assert.equal(kecCount.n,2);
   await stop();
   await test('Pursaklar code against existing Keçiören database fails CLOSED before migrations',async()=>{
     await startExpectBlocked('pursaklar');const {rows:own}=await q('SELECT branch_code FROM branch_identity');assert.equal(own[0].branch_code,'kecioren');await stop();

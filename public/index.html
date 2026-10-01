@@ -28,7 +28,8 @@
         <label class="f"><span data-i18n="fn">Ad</span><input class="input" id="first" autocomplete="given-name" maxlength="40" required><span class="err" id="e_first"></span></label>
         <label class="f"><span data-i18n="ln">Soyad</span><input class="input" id="last" autocomplete="family-name" maxlength="40" required><span class="err" id="e_last"></span></label>
         <label class="f"><span data-i18n="ph">Telefon</span> <small data-i18n="phs">05XX XXX XX XX</small><input class="input" id="phone" inputmode="numeric" autocomplete="tel" placeholder="05__ ___ __ __" maxlength="14" required><span class="err" id="e_phone"></span></label>
-        <label class="f"><span data-i18n="lv">Şu an okuduğun seviye</span><select class="input" id="level" required><option value="" data-i18n="lvp">Seviye seç</option><option>A1</option><option>A2</option><option>B1</option><option>B2</option><option>C1</option><option>C2</option></select><span class="err" id="e_level"></span></label>
+        <label class="f"><span data-i18n="category">Kategori / Kurs</span><select class="input" id="category" required><option value="" data-i18n="categoryPlaceholder">Kategori seç</option></select><span class="err" id="e_category"></span></label>
+        <label class="f"><span data-i18n="lv">Şu an okuduğun seviye</span><select class="input" id="level" required disabled><option value="" data-i18n="lvp">Seviye seç</option></select><span class="err" id="e_level"></span></label>
         <label class="f full"><span data-i18n="tp">Sormak istediğin konu</span> <small data-i18n="tps">İsteğe bağlı</small><textarea class="input" id="topic" maxlength="200" data-i18n-ph="tpph" placeholder="Örn: Present perfect, relative clauses…"></textarea></label>
       </div>
       <div class="actions"><button class="btn primary" type="submit" id="toStep2"><span data-i18n="next">Etüt saatlerine geç</span> →</button></div>

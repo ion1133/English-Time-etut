@@ -13,6 +13,9 @@ ok('Admin password changes increment admin_session_version',()=>{assert.match(se
 ok('Teacher username changes can invalidate sessions',()=>{assert.match(server,/username\.toLowerCase\(\)[\s\S]*session_version=session_version\+\$8/)});
 ok('mobile public links stay present',()=>{assert.match(index,/Etütlerim/);assert.match(index,/Öğretmen misiniz/);assert.match(css,/critical-links \.toplink\{display:flex!important/)});
 ok('mobile Student New Etüt remains present',()=>{assert.match(student,/\+ Yeni Etüt/);assert.match(student,/critical-links single/)});
+ok('public first registration is category-first with dynamic levels',()=>{assert.match(index,/id="category"/);assert.match(appJs,/category_id/);assert.match(appJs,/level_id/);assert.match(server,/resolveCourseSelection/);assert.match(server,/Seçilen etüt seçtiğiniz kategoriye ait değil/)});
+ok('authenticated Student self-enrollment is server validated',()=>{const routes=read('upgrade-routes.js');assert.match(routes,/student\.post\('\/enrollments'/);assert.match(routes,/category_levels WHERE id=\$1 AND category_id=\$2 AND active=true/);assert.match(routes,/student_self_enrolled/);assert.match(routes,/yönetici tarafından kapatılmıştır/)});
+ok('Admin basic Student edit does not overwrite category level',()=>{const adminJs=read('public/admin.js');assert.doesNotMatch(adminJs,/stSave[\s\S]{0,350}level:\$\('#stLevel'\)/);assert.match(read('public/admin.html'),/id="stLevel" disabled/)});
 ok('student-facing selection tiles hide Teacher names',()=>{assert.match(appJs,/const place=s\.classroom\|\|''/);assert.match(studentJs,/class=\"meta\">\$\{esc\(s\.classroom\|\|''\)\}<\/span>/)});
 ok('frontend polling avoids setInterval overlap pattern',()=>{for(const f of ['public/student.js','public/teacher.js','public/admin.js'])assert.doesNotMatch(read(f),/setInterval\s*\(/)});
 ok('Teacher frontend has no phone field rendering',()=>{assert.doesNotMatch(teacherJs,/student\.phone|s\.phone|phone_number|telefon/i)});

@@ -161,6 +161,41 @@ function registerStudent(student,{db,wrap,httpError,positiveIntParam,notify,audi
       WHERE student_id=$1 ORDER BY requested_at DESC LIMIT 30`,[req.student.id]);
     res.json({enrollments,grants,requests,categories:await rules.categories(db.pool)});
   }));
+  student.post('/enrollments',wrap(async(req,res)=>{
+    const categoryId=id(req.body.category_id);
+    const requestedLevel=req.body.level_id===null||req.body.level_id===undefined||req.body.level_id===''?null:id(req.body.level_id);
+    const out=await db.tx(async client=>{
+      const {rows:[studentRow]}=await client.query('SELECT * FROM students WHERE id=$1 AND active=true FOR UPDATE',[req.student.id]);
+      if(!studentRow)throw httpError(401,'Oturum geçersiz.');
+      const {rows:[category]}=await client.query('SELECT * FROM etut_categories WHERE id=$1 AND active=true',[categoryId]);
+      if(!category)throw httpError(404,'Kategori bulunamadı veya artık aktif değil.');
+      if(category.requires_level&&!requestedLevel)throw httpError(400,'Bu kategori için seviye seçin.');
+      if(!category.requires_level&&requestedLevel)throw httpError(400,'Bu kategori seviye gerektirmiyor.');
+      let level=null;
+      if(requestedLevel){
+        const {rows:[row]}=await client.query('SELECT * FROM category_levels WHERE id=$1 AND category_id=$2 AND active=true',[requestedLevel,categoryId]);
+        if(!row)throw httpError(400,'Bu kategori için geçersiz seviye.');
+        level=row;
+      }
+      const {rows:[existing]}=await client.query('SELECT * FROM student_category_enrollments WHERE student_id=$1 AND category_id=$2 FOR UPDATE',[studentRow.id,categoryId]);
+      if(existing?.active){
+        if(!category.requires_level||Number(existing.primary_level_id)===Number(requestedLevel))return {already_enrolled:true};
+        throw httpError(409,'Bu kategoriye zaten kayıtlısınız. Seviye değiştirmek için seviye değişikliği talebi gönderin.');
+      }
+      // An Admin-disabled enrollment is an explicit access decision. Self-enrollment
+      // must not silently override it; only a never-before-enrolled category can be added.
+      if(existing&&!existing.active)throw httpError(403,'Bu kategori erişiminiz yönetici tarafından kapatılmıştır. Eğitim koordinatörüyle görüşün.');
+      await client.query('INSERT INTO student_category_enrollments(student_id,category_id,primary_level_id,active) VALUES($1,$2,$3,true)',[studentRow.id,categoryId,requestedLevel]);
+      if(category.system_key==='general'&&level)await client.query('UPDATE students SET level=$1,updated_at=NOW() WHERE id=$2',[level.code,studentRow.id]);
+      await notify(client,'admin',0,'Öğrenci kategoriye katıldı',`Öğrenci #${studentRow.id} ${category.name_tr} kategorisine katıldı.`,'account');
+      await notify(client,'student',studentRow.id,'Kategori kaydınız oluşturuldu',`${category.name_tr} kategorisi hesabınıza eklendi.`,'account');
+      await audit(client,'student',studentRow.id,'student_self_enrolled','category',categoryId,{level_id:requestedLevel});
+      await db.bumpRevisions(client,['account','booking','notification']);
+      return {already_enrolled:false};
+    });
+    res.status(out.already_enrolled?200:201).json({ok:true,...out});
+  }));
+
   student.post('/level-requests',wrap(async(req,res)=>{
     const categoryId=id(req.body.category_id),newId=id(req.body.requested_level_id),reason=String(req.body.reason||'').trim();
     if(reason.length>500)throw httpError(400,'Açıklama maksimum 500 karakter.');

@@ -1,0 +1,45 @@
+English Time Etüt — candidate.5 category-first/self-enrollment patch
+
+APPLY TO:
+C:\English-Time-Etut-STAGING-FIXED-2.2.0-candidate.3
+(the folder whose package version is currently 2.2.0-candidate.4)
+
+WHAT THIS PATCH CHANGES
+- First registration is category-first.
+- Active Admin-created categories appear automatically.
+- Level choices are restricted to the selected category.
+- Existing authenticated Students can self-enroll in an active category.
+- An Admin-disabled/inactive enrollment cannot be self-reactivated by the Student.
+- Existing enrollment level changes still use the level-change workflow.
+- Server validates category, level, enrollment, slot/category match, eligibility, capacity and weekly quota.
+- Legacy General English API behavior is retained for backward compatibility.
+- Admin's basic Student edit no longer overwrites official category-level enrollment.
+
+HOW TO APPLY
+1. Extract this ZIP over:
+   C:\English-Time-Etut-STAGING-FIXED-2.2.0-candidate.3
+   Allow Windows to replace the listed files.
+
+2. DO NOT replace package.json or package-lock.json from any older ZIP.
+   This patch intentionally does not contain either file.
+
+3. In Command Prompt:
+   cd /d C:\English-Time-Etut-STAGING-FIXED-2.2.0-candidate.3
+   npm version 2.2.0-candidate.5 --no-git-tag-version
+   npm run test:local
+
+EXPECTED LOCAL RESULTS
+- static checks: 24/24
+- upgrade policy tests: 33 passed
+- startup mock tests: all passed
+
+4. If local tests pass, upload the patched files plus the newly updated
+   package.json and package-lock.json to GitHub branch staging only.
+
+5. Deploy staging only. Do not merge to main or deploy production yet.
+
+6. Re-run against etut_disposable_test:
+   npm run test:integration
+   npm run test:upgrade:integration
+
+Real PostgreSQL candidate.5 integration testing is still required before production.
