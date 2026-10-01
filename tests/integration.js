@@ -117,9 +117,9 @@ async function freshMigrationPhase() {
   await stopServer(); await startServer();
   await runTest('second startup is migration-idempotent', async()=>{const {rows}=await q('SELECT version,applied_at FROM schema_migrations ORDER BY version');assert.equal(rows.length,migs1.length);for(let i=0;i<rows.length;i++)assert.equal(new Date(rows[i].applied_at).getTime(),new Date(migs1[i].applied_at).getTime());});
   await stopServer();
-  await q('DELETE FROM slots');
+  await q("UPDATE slots SET active=false,deleted_at=NOW() WHERE active=true");
   await startServer();
-  await runTest('empty schedule after initial seed does not reseed on restart', async()=>{const {rows:[x]}=await q('SELECT COUNT(*)::int n FROM slots');assert.equal(x.n,0);});
+  await runTest('empty schedule after initial seed does not reseed on restart', async()=>{const {rows:[x]}=await q('SELECT COUNT(*)::int n FROM slots WHERE active=true');assert.equal(x.n,0);});
   await stopServer();
 }
 
