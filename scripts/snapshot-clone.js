@@ -62,7 +62,7 @@ async function run(){
       fs.writeFileSync(manifestPath,JSON.stringify(data,null,2),{encoding:'utf8',mode:0o600,flag:'wx'});
       console.log('Clone baseline snapshot written. Contains digests and counts, not readable PII.');return;
     }
-    const {rows:[owner]}=await pool.query('SELECT branch_code FROM branch_identity');
+    const {rows:[owner]}=await client.query('SELECT branch_code FROM branch_identity');
     if(owner?.branch_code!=='kizilay')throw Error('Restored clone was not adopted as Kızılay.');
     const failures=[];
     for(const [table,before] of Object.entries(original.snapshot.tables)){
