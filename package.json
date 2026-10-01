@@ -1,16 +1,18 @@
 {
   "name": "english-time-etut-system",
-  "version": "2.2.0-candidate.2",
+  "version": "2.2.0-candidate.3",
   "description": "English Time Etut System - synchronized student, teacher and admin panels",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test:syntax": "node --check server.js && node --check db.js && node --check messaging.js && node --check upgrade-rules.js && node --check upgrade-routes.js && node --check tests/upgrade-unit.js && node --check tests/upgrade-integration.js && node --check scripts/snapshot-clone.js && node --check public/common.js && node --check public/app.js && node --check public/student.js && node --check public/teacher.js && node --check public/admin.js && node --check tests/integration.js && node --check tests/static-audit.js",
+    "test:syntax": "node --check server.js && node --check db.js && node --check messaging.js && node --check upgrade-rules.js && node --check upgrade-routes.js && node --check tests/upgrade-unit.js && node --check tests/upgrade-integration.js && node --check tests/init-query-shape.js && node --check scripts/snapshot-clone.js && node --check public/common.js && node --check public/app.js && node --check public/student.js && node --check public/teacher.js && node --check public/admin.js && node --check tests/integration.js && node --check tests/static-audit.js",
     "test:integration": "node tests/integration.js",
     "test:static": "node tests/static-audit.js",
-    "test:all": "npm run test:syntax && npm run test:static && npm run test:upgrade:unit && npm run test:integration && npm run test:upgrade:integration",
+    "test:all": "npm run test:local && npm run test:integration && npm run test:upgrade:integration",
     "test:upgrade:unit": "node tests/upgrade-unit.js",
-    "test:upgrade:integration": "node tests/upgrade-integration.js"
+    "test:upgrade:integration": "node tests/upgrade-integration.js",
+    "test:startup-mock": "node tests/init-query-shape.js",
+    "test:local": "npm run test:syntax && npm run test:static && npm run test:upgrade:unit && npm run test:startup-mock"
   },
   "engines": {
     "node": ">=20"

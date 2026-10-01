@@ -86,8 +86,12 @@ async function init() {
   // use their own pooled connections, and is always released in finally.
   const initLockClient = await pool.connect();
   const INIT_LOCK_KEY = 781144263;
-  await initLockClient.query('SELECT pg_advisory_lock($1)', [INIT_LOCK_KEY]);
+  let lockAcquired = false;
   try {
+  // Lock acquisition can fail during a transient database outage. Ensure the
+  // reserved pool connection is released even when no lock was acquired.
+  await initLockClient.query('SELECT pg_advisory_lock($1)', [INIT_LOCK_KEY]);
+  lockAcquired = true;
   const { rows: [pre] } = await q("SELECT to_regclass('public.settings')::text AS settings_table");
   const hadExistingDatabase = !!pre?.settings_table;
   // Check branch ownership BEFORE modifying even a legacy database. This is a
@@ -540,13 +544,14 @@ async function init() {
       ON CONFLICT(student_id,category_id) DO NOTHING`, [general.id]);
     await client.query('UPDATE slots SET category_id=$1 WHERE category_id IS NULL',[general.id]);
     await client.query('UPDATE slot_occurrences SET category_id=s.category_id FROM slots s WHERE slot_occurrences.slot_id=s.id AND slot_occurrences.category_id IS NULL');
-    await client.query('UPDATE booking_slots SET category_id=$1, category_name_snapshot=COALESCE(category_name_snapshot,$2), level_codes_snapshot=COALESCE(level_codes_snapshot,string_to_array(level,'-')) WHERE category_id IS NULL', [general.id,'General English']);
+    await client.query(`UPDATE booking_slots SET category_id=$1, category_name_snapshot=COALESCE(category_name_snapshot,$2), level_codes_snapshot=COALESCE(level_codes_snapshot,string_to_array(level,'-')) WHERE category_id IS NULL`, [general.id,'General English']);
     await client.query(`INSERT INTO slot_level_eligibility(slot_id,category_id,level_id)
       SELECT s.id,$1,cl.id FROM slots s JOIN category_levels cl ON cl.category_id=$1 AND cl.code=ANY(string_to_array(s.level,'-'))
       WHERE s.category_id=$1 ON CONFLICT DO NOTHING`,[general.id]);
   });
   } finally {
-    try { await initLockClient.query('SELECT pg_advisory_unlock($1)', [INIT_LOCK_KEY]); } finally { initLockClient.release(); }
+    try { if (lockAcquired) await initLockClient.query('SELECT pg_advisory_unlock($1)', [INIT_LOCK_KEY]); }
+    finally { initLockClient.release(); }
   }
 }
 
@@ -611,14 +616,20 @@ function sanitizeForLog(value, depth = 0) {
   }
   return out;
 }
+// Omitted fields must be stored as SQL NULL, not misleading numeric zeros.
+function integerOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isInteger(number) ? number : null;
+}
 async function logSystem(entry = {}, client = pool) {
   const severity = ['DEBUG','INFO','WARN','ERROR','CRITICAL'].includes(String(entry.severity || '').toUpperCase()) ? String(entry.severity).toUpperCase() : 'INFO';
   const metadata = sanitizeForLog(entry.metadata || {});
   const params = [
     entry.request_id || null, severity, redactText(entry.category || 'application').slice(0,80), redactText(entry.source || 'server').slice(0,80),
     redactText(entry.environment || process.env.NODE_ENV || '').slice(0,40), entry.http_method || null, entry.route ? redactText(entry.route).slice(0,1000) : null,
-    Number.isInteger(Number(entry.status_code)) ? Number(entry.status_code) : null, entry.user_role || null,
-    Number.isInteger(Number(entry.user_id)) ? Number(entry.user_id) : null, entry.action ? redactText(entry.action).slice(0,200) : null,
+    integerOrNull(entry.status_code), entry.user_role || null,
+    integerOrNull(entry.user_id), entry.action ? redactText(entry.action).slice(0,200) : null,
     redactText(entry.message || 'Unspecified log event').slice(0,4000), entry.error_name ? redactText(entry.error_name).slice(0,200) : null, entry.error_code ? redactText(entry.error_code).slice(0,200) : null,
     entry.stack_trace ? redactText(entry.stack_trace).slice(0,20000) : null, JSON.stringify(metadata), !!entry.resolved,
   ];

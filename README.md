@@ -1,3 +1,5 @@
+> **2026-09-29 — candidate.3 staging hotfix:** Read `STAGING_HOTFIX_2026-09-29.md` first. The report below documents older releases and is NOT proof that this candidate passed a live PostgreSQL integration test or the restored-clone comparator. Do not deploy this candidate to production before those checks pass.
+
 # English Time Etüt System — production-hardened synchronized panels
 
 ## Final validation status

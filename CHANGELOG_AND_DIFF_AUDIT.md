@@ -62,3 +62,11 @@ Implementation includes the major scoped backend and UI changes. **Not yet prove
 - Student Panel now lists all active categories, including future Admin-created categories, while un-enrolled categories remain non-bookable pending Admin enrollment. Existing passwordless student login is unchanged.
 - All branches begin with an unrestricted weekly cap; each branch Admin sets or changes its own cap using the Settings page. Individual student overrides follow the documented defaults.
 - The changes above require fresh PostgreSQL and browser verification before any production cutover.
+
+## 2026-09-29 staging hotfix — candidate.3
+
+- Fixed the confirmed source bug in `db.js` legacy booking category backfill where an unescaped SQL `'-'` inside a JavaScript single-quoted SQL string was parsed into `NaN`, blocking DB initialization after migrations 3/4.
+- Moved startup advisory-lock acquisition inside its `try/finally`, so an interrupted or failed lock request cannot leak a pooled connection on every retry.
+- Preserved optional log status and user IDs as SQL NULL rather than 0 when absent.
+- Added the `tests/init-query-shape.js` non-database startup-path regression (both already-upgraded and legacy-v3/v4 paths plus lock failure), and the `test:startup-mock` / `test:local` npm scripts; bumped package and lockfile root version to candidate.3.
+- See `STAGING_HOTFIX_2026-09-29.md` for test evidence, blocked runtime tests and the *specific* existing-clone recovery workflow. Do not treat previous candidate.2 evidence as evidence of complete production readiness.
