@@ -47,12 +47,38 @@ async function startExpectBlocked(branch){
   if(proc)throw Error('Already started');logs='';
   proc=spawn(process.execPath,['server.js'],{cwd:ROOT,env:{...process.env,NODE_ENV:'test',BRANCH_CODE:branch,BRANCH_NAME:branch,PORT:BASE.split(':').at(-1),DATABASE_URL:raw,SESSION_SECRET:SECRET,ADMIN_PASSWORD:ADMIN,SEED_DEFAULT_SCHEDULE:'false',KIZILAY_ADOPTION_APPROVED:'NO'},stdio:['ignore','pipe','pipe']});
   proc.stdout.on('data',d=>logs+=String(d));proc.stderr.on('data',d=>logs+=String(d));
-  let health;for(let i=0;i<35;i++){try{health=await fetch(BASE+'/readyz');break;}catch{}await sleep(100);}
-  assert.ok(health,'Server did not expose readiness endpoint.');await sleep(500);
-  const r=await fetch(BASE+'/readyz');assert.equal(r.status,503,'Mismatched app cannot serve branch data');
+
+  // A branch mismatch is fail-closed. Depending on timing, /readyz may briefly
+  // return 503 before the process performs its intentional non-zero exit.
+  // Both outcomes are safe; the test must not race a second fetch against exit.
+  let saw503=false;
+  const deadline=Date.now()+4000;
+  while(Date.now()<deadline){
+    if(proc.exitCode!==null)break;
+    try{
+      const r=await fetch(BASE+'/readyz');
+      if(r.status===503){saw503=true;break;}
+      assert.notEqual(r.status,200,'Mismatched app cannot become ready');
+    }catch{}
+    await sleep(100);
+  }
+
+  // Give stderr/stdout a short chance to flush the fail-closed diagnostic.
+  if(!saw503 && proc.exitCode===null)await sleep(300);
   assert.match(logs,/MISMATCH|NOT ADOPTED|legacy/i);
+  assert.ok(saw503 || proc.exitCode!==null,'Mismatched app neither returned 503 nor exited fail-closed');
+  if(proc.exitCode!==null)assert.notEqual(proc.exitCode,0,'Mismatched app must not exit successfully');
 }
-async function stop(){if(!proc)return;const p=proc;proc=null;if(p.exitCode===null)p.kill('SIGTERM');await Promise.race([new Promise(r=>p.once('exit',r)),sleep(8000).then(()=>{if(p.exitCode===null)p.kill('SIGKILL');})]);}
+async function stop(){
+  if(!proc)return;
+  const p=proc;proc=null;
+  if(p.exitCode!==null)return;
+  p.kill('SIGTERM');
+  await Promise.race([
+    new Promise(r=>p.once('exit',r)),
+    sleep(8000).then(()=>{if(p.exitCode===null)p.kill('SIGKILL');})
+  ]);
+}
 async function api(method,route,body,jar){const headers={};if(body!==undefined)headers['Content-Type']='application/json';if(jar?.cookie)headers.Cookie=jar.cookie;
   const response=await fetch(BASE+route,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});if(jar&&response.headers.get('set-cookie'))jar.cookie=response.headers.get('set-cookie').split(';')[0];let data;try{data=await response.json();}catch{data={};}return {status:response.status,data};}
 async function loginAdmin(){const jar={cookie:''};const r=await api('POST','/api/admin/login',{password:ADMIN},jar);assert.equal(r.status,200,JSON.stringify(r.data));return jar;}
