@@ -156,7 +156,7 @@ async function main(){
   await test('Authenticated Student can self-enroll in an active category and then book it',async()=>{
     let r=await api('POST','/api/student/enrollments',{category_id:german.id,level_id:levels[0].id},student);assert.equal(r.status,201,JSON.stringify(r.data));
     const learning=await api('GET','/api/student/learning',undefined,student);assert.equal(learning.status,200);assert.ok(learning.data.enrollments.some(e=>Number(e.category_id)===Number(german.id)&&Number(e.primary_level_id)===Number(levels[0].id)));
-    r=await api('POST','/api/student/book',{selections:[{slot_id:germanOne.id,date:day}]},student);assert.equal(r.status,200,JSON.stringify(r.data));
+    r=await api('POST','/api/student/book',{selections:[{slot_id:germanOne.id,date:nextWeek}]},student);assert.equal(r.status,200,JSON.stringify(r.data));
   });
   await test('Self-enrollment cannot silently change an existing category level',async()=>{
     const r=await api('POST','/api/student/enrollments',{category_id:german.id,level_id:levels[1].id},student);assert.equal(r.status,409,JSON.stringify(r.data));
