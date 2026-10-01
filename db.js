@@ -518,19 +518,47 @@ async function init() {
   await q(`UPDATE booking_slots bs SET student_id=b.student_id
     FROM bookings b WHERE bs.booking_id=b.id AND bs.student_id IS NULL`);
 
-  await q(`UPDATE booking_slots bs SET
-      teacher_id = COALESCE(bs.teacher_id, s.teacher_id),
-      classroom = CASE WHEN bs.classroom='' THEN s.classroom ELSE bs.classroom END,
-      capacity_snapshot = CASE WHEN bs.capacity_snapshot=0 THEN s.capacity ELSE bs.capacity_snapshot END
-    FROM slots s WHERE bs.slot_id=s.id`);
-
+  // Preserve legacy booking_slots exactly as historical snapshots.
+  // When creating slot_occurrences, fall back to the current slot only for
+  // missing teacher/classroom/capacity values, without rewriting booking_slots.
   await q(`
-    INSERT INTO slot_occurrences(slot_id,slot_date,day,start_time,end_time,level,teacher_id,teacher_name,classroom,capacity)
-    SELECT bs.slot_id, bs.slot_date, MIN(bs.day), MIN(bs.start_time), MIN(bs.end_time), MIN(bs.level),
-           MIN(bs.teacher_id), MIN(bs.teacher_name), MIN(bs.classroom), MAX(bs.capacity_snapshot)
-      FROM booking_slots bs
-     WHERE bs.slot_id IS NOT NULL
-     GROUP BY bs.slot_id, bs.slot_date
+    INSERT INTO slot_occurrences(
+      slot_id,
+      slot_date,
+      day,
+      start_time,
+      end_time,
+      level,
+      teacher_id,
+      teacher_name,
+      classroom,
+      capacity
+    )
+    SELECT
+      bs.slot_id,
+      bs.slot_date,
+      MIN(bs.day),
+      MIN(bs.start_time),
+      MIN(bs.end_time),
+      MIN(bs.level),
+      MIN(COALESCE(bs.teacher_id, s.teacher_id)),
+      MIN(bs.teacher_name),
+      MIN(
+        CASE
+          WHEN bs.classroom='' THEN COALESCE(s.classroom,'')
+          ELSE bs.classroom
+        END
+      ),
+      MAX(
+        CASE
+          WHEN bs.capacity_snapshot=0 THEN COALESCE(s.capacity,0)
+          ELSE bs.capacity_snapshot
+        END
+      )
+    FROM booking_slots bs
+    LEFT JOIN slots s ON s.id=bs.slot_id
+    WHERE bs.slot_id IS NOT NULL
+    GROUP BY bs.slot_id, bs.slot_date
     ON CONFLICT(slot_id,slot_date) DO NOTHING
   `);
 
