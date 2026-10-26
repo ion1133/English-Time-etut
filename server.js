@@ -910,6 +910,18 @@ function safeSettings(st) {
   const allowed = ['coordinator_name','classroom_weekday','classroom_weekend','level_rule','min_days_ahead','max_weeks_ahead','branch_name','panel_change_message','data_revision','schedule_revision','booking_revision','account_revision','notification_revision','max_weekly_etuts'];
   return Object.fromEntries(allowed.map(k => [k, st[k] ?? '']));
 }
+admin.get('/schedule-week', wrap(async (req, res) => {
+  const requested = req.query.week;
+  if (typeof requested !== 'string' || !validISODate(requested)) throw httpError(400,'Hafta tarihi geçersiz.');
+  const current = mondayOf(localDateParts().date);
+  const allowed = [-2,-1,0,1].map(n=>addDays(current,n*7));
+  const selected = mondayOf(requested);
+  if (!allowed.includes(selected)) throw httpError(400,'Yalnızca önceki iki hafta, bu hafta ve gelecek hafta görüntülenebilir.');
+  const schedule = await scheduleForWeek(selected);
+  const {rows:eligRows}=await db.q('SELECT slot_id,category_id,level_id FROM slot_level_eligibility');
+  res.json({...schedule,slots:schedule.slots.map(x=>({...x,next_date:x.date,level_ids:eligRows.filter(e=>Number(e.slot_id)===Number(x.id)).map(e=>e.level_id)}))});
+}));
+
 admin.get('/overview', wrap(async (req, res) => {
   const st = await db.getSettings();
   const minDays = Number(st.min_days_ahead || 1);
@@ -1274,6 +1286,12 @@ async function applyOccurrenceCancellation(client,slot,date,cancelling,note,st,{
   if(cancelling) await client.query(`INSERT INTO slot_cancellations(slot_id,slot_date,note) VALUES($1,$2,$3) ON CONFLICT(slot_id,slot_date) DO UPDATE SET note=EXCLUDED.note`,[slot.id,date,note]);
   else await client.query('DELETE FROM slot_cancellations WHERE slot_id=$1 AND slot_date=$2',[slot.id,date]);
   const {rows:affected}=await client.query(`SELECT DISTINCT bs.student_id FROM booking_slots bs WHERE bs.slot_id=$1 AND bs.slot_date=$2 AND bs.status='active' AND bs.student_id IS NOT NULL`,[slot.id,date]);
+  if(cancelling){
+    await client.query(`UPDATE booking_slots SET status='cancelled_by_admin',cancelled_at=NOW(),cancel_note=$3,updated_at=NOW()
+      WHERE slot_id=$1 AND slot_date=$2 AND status='active'`,[slot.id,date,note||'Etüt yönetici tarafından iptal edildi']);
+  }
+  // Restoring an occurrence does not reinstate previously cancelled student bookings.
+  // Students must explicitly book again; otherwise consent/capacity could be violated.
   for(const a of affected) await notify(client,'student',a.student_id,cancelling?'Etüt iptal edildi':'Etüt yeniden açıldı',`${fmtTR(date)} ${occ.start_time} ${occ.level} etüdü ${cancelling?'iptal edildi'+(note?': '+note:''):'yeniden programa alındı'}.`,cancelling?'cancellation':'schedule',slot.id,date);
   if(occ.teacher_id) await notify(client,'teacher',occ.teacher_id,cancelling?'Etüt iptal edildi':'Etüt yeniden açıldı',`${fmtTR(date)} ${occ.start_time}-${occ.end_time} ${occ.level}`,cancelling?'cancellation':'schedule',slot.id,date);
   await notify(client,'admin',0,cancelling?'Etüt iptal edildi':'Etüt yeniden açıldı',`${fmtTR(date)} ${occ.start_time} ${occ.level} · ${affected.length} öğrenci`,'schedule',slot.id,date);

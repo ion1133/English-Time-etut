@@ -33,12 +33,14 @@
     if(activeTab==='logs')await loadLogs(1);
     if(activeTab==='students'&&!studentData.items.length)await loadStudents(1);
     if(activeTab==='bookings'&&!bookingData.items.length)await loadBookings(1);
+    if(activeTab==='schedule')await loadAdminWeek();
   });
 
   async function load(silent=false){
     try{
       D=await api('/api/admin/overview');
       renderAll(settingsDirty);
+      if(activeTab==='schedule')await loadAdminWeek();
       await renderLevelRequests();
       await Promise.all([loadStudents(studentData.page||1,true),loadBookings(bookingData.page||1,true)]);
       syncState=await api('/api/admin/sync-state');
@@ -53,7 +55,7 @@
       if(changed){
         const bookingChanged=!syncState||Number(next.booking_revision||0)!==Number(syncState.booking_revision||0);
         const accountChanged=!syncState||Number(next.account_revision||0)!==Number(syncState.account_revision||0);
-        D=await api('/api/admin/overview');renderAll(settingsDirty);await renderLevelRequests();
+        D=await api('/api/admin/overview');renderAll(settingsDirty);if(activeTab==='schedule')await loadAdminWeek();await renderLevelRequests();
         const jobs=[];if(bookingChanged)jobs.push(loadBookings(bookingData.page||1,true));if(accountChanged||bookingChanged)jobs.push(loadStudents(studentData.page||1,true));if(activeTab==='logs')jobs.push(loadLogs(logData.page||1,true));await Promise.all(jobs);syncState=next;
       }else syncState=next;
     }catch(e){if(e.status===401)return;}
@@ -70,11 +72,26 @@
     const url=D.site_url;if(url!==qrUrl){qrUrl=url;$('#qrImg').src='/api/admin/qr.png?url='+encodeURIComponent(url);$('#qrDl').href=$('#qrImg').src;}$('#openSite').href=url;$('#siteUrl').textContent=url;
   }
 
+  let adminWeekOffset=0,adminWeekSlots=null;
+  const mondayUTC=()=>{const d=new Date(),parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Istanbul',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(d),get=k=>parts.find(p=>p.type===k).value;const v=new Date(Date.UTC(+get('year'),+get('month')-1,+get('day')));v.setUTCDate(v.getUTCDate()-(v.getUTCDay()+6)%7);return v;};
+  const weekISO=offset=>{const d=mondayUTC();d.setUTCDate(d.getUTCDate()+offset*7);return d.toISOString().slice(0,10);};
+  async function loadAdminWeek(){
+    const offset=adminWeekOffset,week=weekISO(offset);
+    try{const result=await api('/api/admin/schedule-week?week='+encodeURIComponent(week));if(offset!==adminWeekOffset)return;adminWeekSlots=result.slots;renderSchedule();}
+    catch(e){adminWeekSlots=null;toast(e.message,true);}
+  }
+  $('#adminWeekPrev').onclick=()=>{if(adminWeekOffset>-2){adminWeekOffset--;loadAdminWeek();}};
+  $('#adminWeekNext').onclick=()=>{if(adminWeekOffset<1){adminWeekOffset++;loadAdminWeek();}};
+  $('#adminWeekCurrent').onclick=()=>{adminWeekOffset=0;loadAdminWeek();};
   function renderSchedule(){
     const el=$('#aSched');el.innerHTML='';
+    const start=weekISO(adminWeekOffset),end=new Date(start+'T00:00:00Z');end.setUTCDate(end.getUTCDate()+6);
+    $('#adminWeekLabel').textContent=fmtDate(start)+' – '+fmtDate(end.toISOString().slice(0,10));
+    $('#adminWeekPrev').disabled=adminWeekOffset<=-2;$('#adminWeekNext').disabled=adminWeekOffset>=1;
+    const shown=adminWeekSlots||[];
     for(let d=1;d<=7;d++){
       const col=document.createElement('div');col.className='daycol show'+(d>=6?' weekend':'');col.innerHTML=`<div class="dayhead d${d}">${DAYS[d]}</div>`;
-      (D.slots||[]).filter(x=>Number(x.day)===d).forEach(s=>{const b=document.createElement('button');b.type='button';b.className='tile'+(s.cancelled?' cancel':'');b.innerHTML=`<span class="edit">${s.cancelled?'İPTAL':'✎ '+s.booked}</span><span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.category_name_tr||'')} · ${esc(s.level)}</span><span class="meta">${esc(s.teacher_name||'— öğretmen yok')} · ${esc(fmtDate(s.next_date||s.date))}</span><span class="capacity-mini">Kayıt ${s.capacity>0?`${s.booked}/${s.capacity}`:`${s.booked} / ∞`} · ${esc(s.classroom||'')}</span>`;b.onclick=()=>openSlot(s);col.appendChild(b);});el.appendChild(col);
+      shown.filter(x=>Number(x.day)===d).forEach(s=>{const b=document.createElement('button');b.type='button';b.className='tile'+(s.cancelled?' cancel':'');b.innerHTML=`<span class="edit">${s.cancelled?'İPTAL':'✎ '+s.booked}</span><span class="time">${s.start_time}–${s.end_time}</span><span class="lvl">${esc(s.category_name_tr||'')} · ${esc(s.level)}</span><span class="meta">${esc(s.teacher_name||'— öğretmen yok')} · ${esc(fmtDate(s.next_date||s.date))}</span><span class="capacity-mini">Kayıt ${s.capacity>0?`${s.booked}/${s.capacity}`:`${s.booked} / ∞`} · ${esc(s.classroom||'')}</span>`;b.onclick=()=>openSlot(s);col.appendChild(b);});el.appendChild(col);
     }
   }
   function renderCategories(){
@@ -118,10 +135,10 @@
     try{
       if(curSlot){try{await api('/api/admin/slots/'+curSlot.id,'PUT',body);}catch(e){if(e.status===409&&e.data?.affected){if(!confirm(e.message+'\n\nMevcut öğrenciler etütte kalacak. Devam edilsin mi?'))return;await api('/api/admin/slots/'+curSlot.id,'PUT',{...body,confirm_level_change:true});}else throw e;}}
       else await api('/api/admin/slots','POST',body);
-      $('#slotBg').classList.remove('show');toast('Program atomik olarak güncellendi.');await load();
+      $('#slotBg').classList.remove('show');toast('Program atomik olarak güncellendi.');await load();if(activeTab==='schedule')await loadAdminWeek();
     }catch(e){toast(e.message,true);}
   };
-  $('#sDelete').onclick=async()=>{try{const impact=await api('/api/admin/slots/'+curSlot.id+'/delete-impact');const msg=impact.active_future_bookings?`Bu etüdün ${impact.active_future_bookings} aktif gelecek kaydı var. Bu kayıtlar iptal olarak korunacak. Programdan arşivlensin mi?`:'Bu etüt gelecek programdan arşivlensin mi?';if(!confirm(msg))return;await api('/api/admin/slots/'+curSlot.id+'?confirm=1','DELETE');$('#slotBg').classList.remove('show');toast('Etüt arşivlendi; geçmiş korunuyor.');await load();}catch(e){toast(e.message,true);}};
+  $('#sDelete').onclick=async()=>{try{const impact=await api('/api/admin/slots/'+curSlot.id+'/delete-impact');const msg=impact.active_future_bookings?`Bu etüdün ${impact.active_future_bookings} aktif gelecek kaydı var. Bu kayıtlar iptal olarak korunacak. Programdan arşivlensin mi?`:'Bu etüt gelecek programdan arşivlensin mi?';if(!confirm(msg))return;await api('/api/admin/slots/'+curSlot.id+'?confirm=1','DELETE');$('#slotBg').classList.remove('show');toast('Etüt arşivlendi; geçmiş korunuyor.');await load();if(activeTab==='schedule')await loadAdminWeek();}catch(e){toast(e.message,true);}};
 
   function renderTeachers(){
     const rows=(D.teachers||[]).map(t=>{const n=(t.assignments||[]).length,status=t.deleted_at?'Arşiv':t.active?'Aktif':'Kapalı';return`<tr><td><b>${esc(t.name)}</b><br><small>@${esc(t.username||'—')}</small></td><td>${esc(t.phone||'—')}</td><td><span class="tag ${t.active&&!t.deleted_at?'g':'r'}">${status}</span></td><td>${n} etüt</td><td>${esc(t.note||'')}</td><td><button class="btn ghost sm" data-te="${t.id}">Yönet</button></td></tr>`;}).join('');
